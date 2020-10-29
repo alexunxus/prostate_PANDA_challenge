@@ -1,0 +1,6 @@
+prostate_model/__pycache__/*
+*.ipynb
+NLSTv2/*
+__pycache__/*
+.ipynb_checkpoints/*
+checkpoint/
