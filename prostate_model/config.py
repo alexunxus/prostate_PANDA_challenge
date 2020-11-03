@@ -14,14 +14,14 @@ _C.DATASET.TRAIN_RATIO = 0.9 # if VALID_DIR is [], then it works
 _C.DATASET.IMG_SIZE = (1000, 64, 128)
 
 _C.MODEL = CN()
-_C.MODEL.BACKBONE = "R-50-v2" # R-50-v1, R-50-v2, R-50-xt
+_C.MODEL.BACKBONE = 'baseline' # R-50-v1, R-50-v2, R-50-xt
 _C.MODEL.BATCH_SIZE = 32
 _C.MODEL.EPOCHS = 50
-_C.MODEL.LEARNING_RATE = 1e-4
+_C.MODEL.LEARNING_RATE = 1e-5
 _C.MODEL.USE_PRETRAIN = True
 _C.MODEL.NORM_USE = "bn" # bn, gn
 _C.MODEL.OPTIMIZER = "SGD" # SGD, Adam
-_C.MODEL.CRITERION = "CE"
+_C.MODEL.CRITERION = None
 _C.MODEL.CHECKPOINT_PATH = '/workspace/prostate_isup/checkpoint/'
 
 def get_cfg_defaults():

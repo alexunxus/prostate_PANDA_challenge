@@ -114,7 +114,7 @@ class Dataset:
         self.target_size = target_size
         
         self.feature_maps = feature_maps
-        self.isup_scores = isup_scores
+        self.isup_scores = isup_scores/5.
         assert len(self.isup_scores) == len(self.feature_maps)
         
         self.cur_pos = 0
@@ -123,6 +123,8 @@ class Dataset:
             self.shuffle()
     
     def __getitem__(self, index):
+        ''' get image and label, the type of image should be torch.float
+        '''
         image = np.load(os.path.join(self.npy_path, self.feature_maps[index]))
         label = self.isup_scores[index]
         assert image.shape[1] <= self.target_size[1] and image.shape[2] <= self.target_size[2]
@@ -130,7 +132,8 @@ class Dataset:
                        ((0, 0),
                        (0, self.target_size[1]-image.shape[1]),
                        (0, self.target_size[2]-image.shape[2])), 'constant', constant_values=(0, 0))
-        
+        image = torch.from_numpy(image.astype(np.float32))
+
         self.cur_pos = (self.cur_pos+1) % len(self)
         return image, label
     
@@ -144,27 +147,3 @@ class Dataset:
         tmp = list(zip(self.feature_maps, self.isup_scores))
         shuffle(tmp)
         self.featuer_maps, self.isup_scores = zip(*tmp)
-
-class XDataLoader(DataLoader):
-    def __init__(self, dataset, batch_size=32):
-        super(XDataLoader, self).__init__(dataset, batch_size=batch_size, num_workers=2)
-        self.cur_pos = 0
-    
-    def __getitem__(self, idx):
-        idx %= len(self)
-        start = idx * self.batch_size
-        end   = min((idx+1)*self.batch_size, len(self.dataset))
-        batch_x = []
-        batch_y = []
-        
-        for i in range(start, end):
-            img, label = self.dataset[idx]
-            batch_x.append(img)
-            batch_y.append(label)
-        
-        batch_x = torch.from_numpy(np.array(batch_x, dtype=np.float32))
-        batch_y = torch.from_numpy(np.array(batch_y, dtype=np.float32).reshape((-1, 1)))
-        return batch_x, batch_y
-    
-    def __len__(self):
-        return math.ceil(len(self.dataset)*1./self.batch_size)
