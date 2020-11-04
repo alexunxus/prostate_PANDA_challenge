@@ -55,16 +55,22 @@ def get_train_test(json_dir, ratio=0.1):
 
 # Dataloader for concated tiles
 class TileDataset:
-    def __init__(self, img_names, img_dir, json_dir, label_path, patch_size, tile_size=6, aug=None, preproc=None):
+    def __init__(self, img_names, img_dir, json_dir, label_path, patch_size, tile_size=6, is_test=False, aug=None, preproc=None):
         '''
         Arg: img_names: string, the slide names from train_test split
-             img_dir: path string, the directory of the 
+             img_dir: path string, the directory of the slide tiff files
+             json_dir: path string, the directory of the json files
+             patch_size: int
+             tile_size: int, each item from this dataset will be rendered as a concated 3*tile_size*tile_size image
+             aug: augmentation function
+             preproc: torch transform object, default: resnet_preproc
         '''
         self.json_dir   = json_dir
         self.img_dir    = img_dir
         self.label_path = label_path
         self.patch_size = patch_size
         self.tile_size  = tile_size
+        self.is_test    = is_test
         self.aug        = aug
         self.preproc    = preproc
         
@@ -83,6 +89,7 @@ class TileDataset:
         self.cur_pos = 0
     
     def _get_isup(self):
+        # get ISUP scores of each slide from a csv file
         print("=============Get ISUP scores=================")
         t1 = time.time()
         df = pd.read_csv(self.label_path)
@@ -90,38 +97,49 @@ class TileDataset:
         print(f"Loading ISUP scores takes {time.time()-t1} second")
     
     def _get_coord(self):
+        # get the coordinated prefetched by /foreground/preprocess.py, stored at /foreground/data_256/*.json
         print("==========Collecting coordinates=============")
         t1 = time.time()
         for img_name in self.img_names:
             with open(os.path.join(self.json_dir, img_name+'.json')) as f:
                 js = json.load(f)
             tmp_list = (js[img_name][0]['coord_list'])
-            random.shuffle(tmp_list)
             self.coords.append(tmp_list)
         print(f"Loading coordinates takes {time.time()-t1} second")
         print("=========Collecting data finished============")
         
     def __getitem__(self, idx):
-        self.cur_pos = idx
-        ps, ts = self.patch_size, self.tile_size
+        '''
+        This function will fectch idx-th bags of image from the coordinate list, get the first
+        tile size * tile size images from the coordinate list, concatenate them, and performing augmentation, 
+        preprocessing. In addition, the label will also be generated as a torch tensor
         
+            grade 3 --> [1, 1, 1, 0, 0]
+            grade 5 --> [1, 1, 1, 1, 1]
+            grade 0 --> [0, 0, 0, 0, 0]
+        
+        Ultimately, the preprocessed image will be returned altogether with the groundtruth label
+
+        # TODO
+        testing time: swap the tiles for 4 times and then return 4 concatenated images(no augmenatation)
+        '''
+        self.cur_pos = idx
+
         # get image
         this_slide = Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
         
-        # cat tile is of type "np.uint8"
-        foreground_coord = self.coords[idx][:min(ts**2, len(self.coords[idx]))]
-        tiles = [this_slide.get_patch_at_level((x*ps, y*ps), (ps, ps)) for x, y in foreground_coord]
-        if self.aug is not None:
-            tiles = self.aug.discrete_aug(images=(tiles))
-            cat_tile = self.aug.complete_aug(images=[concat_tiles(tiles, patch_size=ps, tile_sz=6)])[0]
-            cat_tile = cat_tile.astype(np.float32)/255.
+        # cat tile is of type "np.float32", had been normalized to 1
+        if self.is_test:
+            cat_tiles = [self._get_one_cat_tile(idx, this_slide)for i in range(4)]
+            img = [torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float() for cat_tile in cat_tiles]
+            img = torch.stack(img)
+            if self.preproc is not None:
+                img = [self.preproc(im) for im in img]
         else:
-            cat_tile = concat_tiles(tiles, patch_size=ps, tile_sz=6).astype(np.float32)/255.
-        del this_slide
-
-        img = torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float()
-        if self.preproc is not None:
-            img = self.preproc(img/255.)
+            cat_tile = self._get_one_cat_tile(idx, this_slide)
+            img = torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float()
+            if self.preproc is not None:
+                img = self.preproc(img)
         
         # get label
         label = np.zeros(5)
@@ -131,6 +149,19 @@ class TileDataset:
         
         self.cur_pos = (self.cur_pos+1)%len(self)
         return img, label
+    
+    def _get_one_cat_tile(self, idx, this_slide):
+        ps, ts = self.patch_size, self.tile_size
+        random.shuffle(self.coords[idx])
+        foreground_coord = self.coords[idx][:min(ts**2, len(self.coords[idx]))]
+        tiles = [this_slide.get_patch_at_level((x*ps, y*ps), (ps, ps)) for x, y in foreground_coord]
+        if self.aug is not None:
+            tiles = self.aug.discrete_aug(images=(tiles))
+            cat_tile = self.aug.complete_aug(images=[concat_tiles(tiles, patch_size=ps, tile_sz=6)])[0]
+            cat_tile = cat_tile.astype(np.float32)/255.
+        else:
+            cat_tile = concat_tiles(tiles, patch_size=ps, tile_sz=6).astype(np.float32)/255.
+        return cat_tile
     
     def __next__(self):
         return self.__getitem__(self.cur_pos)

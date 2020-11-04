@@ -12,8 +12,8 @@ from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
 
 SLIDE_DIR = '/mnt/extension/experiment/prostate-gleason/train_images/'
 MASK_DIR  = '/mnt/extension/experiment/prostate-gleason/train_label_masks/'
-MIL_PATCH_SIZE=256
-FOREGROUND_DIR = '/workspace/prostate_isup/foreground/data_256/'
+MIL_PATCH_SIZE=512
+FOREGROUND_DIR = f'/workspace/prostate_isup/foreground/data_{MIL_PATCH_SIZE}/'
 
 def file_without_mask(img_dir, mask_dir):
     img_files = [f.split('.tiff')[0] for f in os.listdir(img_dir)]
@@ -21,7 +21,7 @@ def file_without_mask(img_dir, mask_dir):
     problem_files = [f for f in img_files if f not in mask_files]
     return problem_files
 
-def find_non_background_patches(path, is_mask=False, orig_path=None, patch_size = 256, threshold=0.05):
+def find_non_background_patches(path, patch_size, is_mask=False, orig_path=None, threshold=0.05):
     '''
     Arg:
         path: image path string

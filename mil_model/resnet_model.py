@@ -1,11 +1,20 @@
 from torchvision.models import resnet50
 import torch.nn as nn
 import torch.optim
+import os
 
 class BaselineResNet50(nn.Module):
     def __init__(self, num_grade):
         super(BaselineResNet50, self).__init__()
-        self.backbone = resnet50(pretrained=True)
+        weight_path = './checkpoint/.imagenet_weight'
+        if not os.path.isfile(weight_path):
+            self.backbone = resnet50(pretrained=True)
+            torch.save(self.backbone.state_dict(), weight_path)
+        else:
+            print(f"Loading model weight from {weight_path}...")
+            self.backbone = resnet50(pretrained=False)
+            self.backbone.load_state_dict(torch.load(weight_path))
+            print(f"Resnet model is prepared.")
         self.linear = nn.Linear(1000, num_grade)
         self.activation = nn.Sigmoid()
 

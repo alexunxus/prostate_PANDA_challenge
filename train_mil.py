@@ -32,6 +32,7 @@ if __name__ == "__main__":
                                 label_path=cfg.DATASET.LABEL_FILE, 
                                 patch_size=cfg.DATASET.PATCH_SIZE, 
                                 tile_size=cfg.DATASET.TILE_SIZE, 
+                                is_test=False,
                                 aug=PathoAugmentation, 
                                 preproc=None)
     test_dataset  = TileDataset(img_names=x_test, 
@@ -40,11 +41,15 @@ if __name__ == "__main__":
                                 label_path=cfg.DATASET.LABEL_FILE, 
                                 patch_size=cfg.DATASET.PATCH_SIZE, 
                                 tile_size=cfg.DATASET.TILE_SIZE, 
+                                is_test=True,
                                 aug=None, 
                                 preproc=None)
                         
     train_loader = DataLoader(train_dataset, batch_size=cfg.MODEL.BATCH_SIZE, shuffle=True , num_workers=2)
-    test_loader  = DataLoader(test_dataset , batch_size=cfg.MODEL.BATCH_SIZE, shuffle=False, num_workers=2)
+    test_loader  = DataLoader(test_dataset , 
+                              batch_size=cfg.MODEL.BATCH_SIZE //cfg.MODEL.ENSEMBLE_NUM, 
+                              shuffle=False, 
+                              num_workers=2)
 
     # prepare resnet50
     print("==============Building model=================")
@@ -62,17 +67,18 @@ if __name__ == "__main__":
     checkpoint_prefix = f"{cfg.MODEL.BACKBONE}_{cfg.DATASET.TILE_SIZE}_"
     
     # prepare training and testing loss
+    # will save the model with best loss only and have the patience=10
     train_losses = []
     test_losses  = []
     kappa_values = []
     best_loss = 1000
     best_idx  = 0
+    patience  = 0
 
     # training pipeline
     print("==============Start training=================")
     for epoch in range(cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
-        running_loss = 0.0
-        num_data = 0
+        total_loss = 0.0
         pbar = tqdm(enumerate(train_loader, 0))
         for i, data in pbar:
             # get the inputs; data is a list of [inputs, labels]
@@ -90,14 +96,17 @@ if __name__ == "__main__":
             loss = criterion(outputs, labels)
             loss.backward()
 
-            print(model[0].weight.grad)
+            # debug
+            if cfg.SOURCE.DEBUG:
+                print(model.backbone.conv1.weight.grad)
+
             optimizer.step()
 
             # print statistics
-            running_loss += loss.item()
-            num_data += labels.shape[0]
-            pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i}/{len(train_loader)}] training loss={(running_loss)/num_data}")
-            train_losses.append(running_loss/len(train_dataset))
+            total_loss   += loss.item()
+            running_loss =  loss.item()
+            pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i}/{len(train_loader)}] training loss={running_loss}")
+        train_losses.append(total_loss/len(train_loader))
         
         # compute test loss
         test_loss = 0.0
@@ -105,21 +114,30 @@ if __name__ == "__main__":
         predictions = []
         groundtruth = []
         for features, labels in test_loader:
-            features = features.cuda()
+            first_two_dim = features.shape[:2]
+            features = features.view((-1, *features.shape[2:])).cuda()
             labels   = labels.cuda()
             with torch.no_grad():
-                outputs = model(features).squeeze()
+                outputs = model(features)
+                outputs = torch.means(outputs.view((*first_two_dim, -1)), axis=1)
                 test_loss += criterion(labels, outputs).item()
                 num_data += outputs.shape[0]
                 predictions.append(outputs.cpu())
                 groundtruth.append(labels.cpu())
-        test_losses.append(test_loss/num_data)
+        test_losses.append(test_loss/len(test_loader))
+        
         # compute quadratic kappa value:
         kappa = kappa_metric(groundtruth, predictions)
         kappa_values.append(kappa)
         print(f"[{epoch}/{cfg.MODEL.EPOCHS}]training loss = {train_losses[-1]}, testing loss={test_losses[-1]}, kappa={kappa}")
         if test_loss < best_loss:
             torch.save(model.state_dict(), os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best.pth"))
+            patience = 0
+        else:
+            patience += 1
+            if patience >= cfg.MODEL.PATIENCE:
+                print(f"Early stopping at epoch {epoch}")
+                break
     
     print('======Saving training curves=======')
     loss_dict = {}

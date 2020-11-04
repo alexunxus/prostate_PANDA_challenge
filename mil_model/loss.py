@@ -3,13 +3,15 @@ from torch.nn import BCELoss
 from sklearn.metrics import cohen_kappa_score, confusion_matrix
 
 def get_bceloss():
-    return BCELoss
+    # binary cross entropy loss
+    return BCELoss()
 
 def kappa_score(gt, pred):
+    # quadratic weighted kappa
     return cohen_kappa_score(gt, pred, weights='quadratic')
 
 def cat2num(np_array):
-    '''Arg: np_array with shape (N, 5)'''
+    '''Arg: np_array with shape (N, 5), Return: (N), the grading'''
     ret = np.zeros(np_array.shape[0], dtype=np.int32)
     for i in range(np_array.shape[0]):
         zero_array = np_array[i].nonzero()[0]
@@ -57,8 +59,18 @@ if __name__ == '__main__':
     
     with torch.no_grad():
         preds = [torch.rand(32, 5) for i in range(10)]
-        #gts   = [torch.rand(32, 5) for i in range(10)]
+        gts   = [torch.rand(32, 5) for i in range(10)]
         gts = preds
         kappa_metric(gts, preds)
+        kappa_metric(gts, gts)
+    
+    # BECLoss test
+    a = torch.rand(32, 5)
+    b = torch.rand(32, 5)
+    print(a, b)
+    criterion = get_bceloss()
+
+    loss = criterion(a, b)
+    print(loss)
 
 
