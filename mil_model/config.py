@@ -2,7 +2,7 @@ from yacs.config import CfgNode as CN
 
 _C = CN() # Node, lv0
 _C.SYSTEM = CN() # None, lv1
-_C.SYSTEM.DEVICES = [5]
+_C.SYSTEM.DEVICES = [3]
 
 _C.SOURCE = CN()
 _C.SOURCE.RESULT_DIR = "" # Full path to store the result
@@ -29,7 +29,7 @@ _C.MODEL.OPTIMIZER         = "SGD" # SGD, Adam
 _C.MODEL.CRITERION         = "BCE"
 _C.MODEL.CHECKPOINT_PATH   = '/workspace/prostate_isup/checkpoint/'
 _C.MODEL.ENSEMBLE_NUM      = 4
-_C.MODEL.PATIENCE          = 10
+_C.MODEL.PATIENCE          = 5
 
 def get_cfg_defaults():
   """Get a yacs CfgNode object with default values for my_project."""

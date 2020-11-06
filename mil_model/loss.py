@@ -1,6 +1,7 @@
 import torch
 from torch.nn import BCELoss
 from sklearn.metrics import cohen_kappa_score, confusion_matrix
+import numpy as np
 
 def get_bceloss():
     # binary cross entropy loss
@@ -27,14 +28,10 @@ def kappa_metric(gts, preds):
     gts:   [tensor[[batch, 5]...], tensor[[batch, 5]...]...] a list of tensor in batches
     preds: [tensor[[batch, 5]...], tensor[[batch, 5]...]...]
     '''
-    print(gts)
-    print(preds)
     gts   = np.array([tensor.numpy()>0.5 for tensor in gts  ]).reshape((-1, 5))
     preds = np.array([tensor.numpy()>0.5 for tensor in preds]).reshape((-1, 5))
     gts   = cat2num(gts)
     preds = cat2num(preds)
-    print(gts)
-    print(preds)
     print(f"Ground truth shape = {gts.shape}")
     print(f"Prediction shape   = {preds.shape}")
     k = kappa_score(gts, preds)
@@ -44,8 +41,6 @@ def kappa_metric(gts, preds):
     return k
 
 if __name__ == '__main__':
-    import numpy as np
-    import torch
     a = np.array([1, 3, 1, 2, 2, 1, 1, 3, 1])
     b = np.array([1, 2, 1, 1, 1, 3, 3, 1, 2])
     print(kappa_score(a, b))
@@ -73,4 +68,9 @@ if __name__ == '__main__':
     loss = criterion(a, b)
     print(loss)
 
+    # 
+    a = torch.tensor([1, 0, 0, 0, 1, 5, 0, 0, 4, 5])
+    b = torch.tensor([4, 4, 4, 4, 4, 4, 4, 4, 4, 4])
+    print(confusion_matrix(a, b))
+    print(kappa_score(a, b))
 
