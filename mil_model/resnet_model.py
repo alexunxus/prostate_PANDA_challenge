@@ -6,6 +6,11 @@ import os
 class BaselineResNet50(nn.Module):
     def __init__(self, num_grade, resume_from=None):
         super(BaselineResNet50, self).__init__()
+        '''
+        Arg: num_grade: int, largest ISUP grade, is 5
+             resume_from: file string, if the file string exist, the model will be loaded from the file
+                          otherwise, load weight from imagenet
+        '''
         if resume_from is not None and os.path.isfile(resume_from):
             self.backbone = resnet50(pretrained=False)
             self.linear = nn.Linear(1000, num_grade)

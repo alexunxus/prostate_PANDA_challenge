@@ -49,7 +49,7 @@ if __name__ == "__main__":
                         
     train_loader = DataLoader(train_dataset, batch_size=cfg.MODEL.BATCH_SIZE, shuffle=True , num_workers=2)
     test_loader  = DataLoader(test_dataset , 
-                              batch_size=cfg.MODEL.BATCH_SIZE //cfg.MODEL.ENSEMBLE_NUM, 
+                              batch_size=cfg.MODEL.BATCH_SIZE, 
                               shuffle=False, 
                               num_workers=2)
 
@@ -60,10 +60,8 @@ if __name__ == "__main__":
 
     # prepare resnet50, resume from checkpoint
     print("==============Building model=================")
-    if os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best.pth")):
-        resume_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best.pth")
-    elif os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best_kappa.pth")):
-        resume_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best_kappa.pth")
+    if os.path.isfile(cfg.MODEL.RESUME_FROM):
+        resume_path = cfg.MODEL.RESUME_FROM
     else:
         resume_path = None
     model = BaselineResNet50(num_grade=cfg.DATASET.NUM_GRADE, resume_from=resume_path).cuda()
@@ -80,7 +78,7 @@ if __name__ == "__main__":
     test_losses  = []
     kappa_values = []
     best_loss = 1000
-    best_kappa= 0
+    best_kappa= -10
     best_idx  = 0
     patience  = 0
 
@@ -97,8 +95,8 @@ if __name__ == "__main__":
             inputs, labels = data
 
             # change shape of array to (B, imgs_shape) and (B, 5), shuffling them
-            inputs = inputs.view(-1, *inputs.shape[2:])
-            labels = labels.view(-1, *labels.shape[2:])
+            #inputs = inputs.view(-1, *inputs.shape[2:])
+            #labels = labels.view(-1, *labels.shape[2:])
             
             inputs = inputs.cuda()
             labels = labels.cuda()
@@ -110,8 +108,7 @@ if __name__ == "__main__":
 
             # forward + backward + optimize
             outputs = model(inputs)
-            print("train outputs=", outputs)
-            print("train_labels = ", labels)
+    
             # compute loss and backpropagation
             loss = criterion(outputs, labels)
             loss.backward()
@@ -126,7 +123,7 @@ if __name__ == "__main__":
             # print statistics
             total_loss   += loss.item()
             running_loss =  loss.item()
-            print("train_loss = ", running_loss)
+            
             pbar.set_postfix_str(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
         train_losses.append(total_loss/len(train_loader))
@@ -147,7 +144,6 @@ if __name__ == "__main__":
                 outputs = torch.mean(outputs.view((*first_two_dim, -1)), axis=1)
                 test_loss = criterion(outputs, labels).item()
                 test_total_loss += test_loss
-                
 
                 predictions.append(outputs.cpu())
                 groundtruth.append(labels.cpu())

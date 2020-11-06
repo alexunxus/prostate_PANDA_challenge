@@ -12,7 +12,7 @@ def kappa_score(gt, pred):
     return cohen_kappa_score(gt, pred, weights='quadratic')
 
 def cat2num(np_array):
-    '''Arg: np_array with shape (N, 5), Return: (N), the grading'''
+    '''Arg: concatenated np_array with shape (N, 5), Return: (N), the grading'''
     ret = np.zeros(np_array.shape[0], dtype=np.int32)
     for i in range(np_array.shape[0]):
         zero_array = np_array[i].nonzero()[0]
@@ -28,8 +28,8 @@ def kappa_metric(gts, preds):
     gts:   [tensor[[batch, 5]...], tensor[[batch, 5]...]...] a list of tensor in batches
     preds: [tensor[[batch, 5]...], tensor[[batch, 5]...]...]
     '''
-    gts   = np.array([tensor.numpy()>0.5 for tensor in gts  ]).reshape((-1, 5))
-    preds = np.array([tensor.numpy()>0.5 for tensor in preds]).reshape((-1, 5))
+    gts   = np.concatenate([tensor.numpy()>0.5 for tensor in gts  ], axis=0).reshape((-1, 5))
+    preds = np.concatenate([tensor.numpy()>0.5 for tensor in preds], axis=0).reshape((-1, 5))
     gts   = cat2num(gts)
     preds = cat2num(preds)
     print(f"Ground truth shape = {gts.shape}")

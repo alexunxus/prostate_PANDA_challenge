@@ -50,12 +50,23 @@ def get_train_test(json_dir, ratio=0.1):
             X_test:  a list of slide_name string with ratio%     of all the training images
     '''
     file_list = [f.split('.json')[0] for f in os.listdir(json_dir) if f.endswith('.json')]
-    X_train, X_test = train_test_split(file_list, test_size=ratio, shuffle=False)
+    X_train, X_test = train_test_split(file_list, test_size=ratio, shuffle=False, random_state=87)
     return X_train, X_test
 
 # Dataloader for concated tiles
 class TileDataset:
-    def __init__(self, img_names, img_dir, json_dir, label_path, patch_size, tile_size=6, dup = 4, is_test=False, aug=None, preproc=None):
+    def __init__(self, 
+                 img_names, 
+                 img_dir, 
+                 json_dir, 
+                 label_path, 
+                 patch_size, 
+                 tile_size=6, 
+                 dup = 4, 
+                 is_test=False, 
+                 aug=None, 
+                 preproc=None, 
+                 train_ensemble=False):
         '''
         Arg: img_names: string, the slide names from train_test split
              img_dir: path string, the directory of the slide tiff files
@@ -65,6 +76,7 @@ class TileDataset:
              dup: int, will get $dup concatenated tiles from one slide to save slide reading time
              aug: augmentation function
              preproc: torch transform object, default: resnet_preproc
+             train_ensemble: one training image will generate $dup number for concatenated images
         '''
         self.json_dir   = json_dir
         self.img_dir    = img_dir
@@ -75,6 +87,7 @@ class TileDataset:
         self.is_test    = is_test
         self.aug        = aug
         self.preproc    = preproc
+        self.ensemble   = train_ensemble
         
         # resnet preprocessing
         if self.preproc is None:
@@ -125,9 +138,12 @@ class TileDataset:
         Ultimately, the preprocessed image will be returned altogether with the groundtruth label
         
         Return:
-            Training time:
+            Training time(unsemble version):
                 imgs: list of tensor with length self.dup
                 labels: list of tensor with length self.dup
+            Training time(non-unsemble version):
+                imgs: a tensor
+                label: a tensor
             Testing time:
                 imgs: list of tensor with length self.dup --> will be averaged after passing to model
                 label: ONE tensor
@@ -139,18 +155,23 @@ class TileDataset:
 
         # cat tile is of type "np.float32", had been normalized to 1
         # test time augmentation: find 4 images and will average their predicted values
-        cat_tiles = [self._get_one_cat_tile(idx, this_slide)for i in range(self.dup)]
-        img = [torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float() for cat_tile in cat_tiles]
-        if self.preproc is not None:
-            img = [self.preproc(im) for im in img]
-        img = torch.stack(img)
-        
+        if not self.ensemble and not self.is_test:
+            img = torch.from_numpy(self._get_one_cat_tile(idx, this_slide).transpose((2, 0, 1))).float()
+            if self.preproc is not None:
+                img = self.preproc(img)
+        else:
+            cat_tiles = [self._get_one_cat_tile(idx, this_slide)for i in range(self.dup)]
+            img = [torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float() for cat_tile in cat_tiles]
+            if self.preproc is not None:
+                img = [self.preproc(im) for im in img]
+            img = torch.stack(img)
+
         # get label
         label = np.zeros(5)
         for i in range(0, self.isup_scores[idx]):
             label[i] = 1
         label = torch.from_numpy(label).float()
-        if not self.is_test:
+        if not self.is_test and self.ensemble:
             label = label.repeat(self.dup, 1)
         
         self.cur_pos = (self.cur_pos+1)%len(self)
@@ -175,5 +196,4 @@ class TileDataset:
         return self.__getitem__(self.cur_pos)
     
     def __len__(self):
-        return 1
-        #return len(self.img_names)
+        return len(self.img_names)
