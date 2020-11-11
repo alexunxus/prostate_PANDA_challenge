@@ -32,13 +32,27 @@ def kappa_metric(gts, preds):
     preds = np.concatenate([tensor.numpy()>0.5 for tensor in preds], axis=0).reshape((-1, 5))
     gts   = cat2num(gts)
     preds = cat2num(preds)
-    print(f"Ground truth shape = {gts.shape}")
-    print(f"Prediction shape   = {preds.shape}")
-    k = kappa_score(gts, preds)
-    conf = confusion_matrix(gts, preds)
+    k     = kappa_score(gts, preds)
+    conf  = confusion_matrix(gts, preds)
     print(f"Kappa score = {k}")
     print("Confusion matrix:\n", conf)
     return k
+
+def correct(gt, pred):
+    '''
+    gt    is a (B, 5) tensor or [tensor[[batch, 5]...], tensor[[batch, 5]...]...]
+    label is a (B, 5) tensor or [tensor[[batch, 5]...], tensor[[batch, 5]...]...]
+    '''
+    if isinstance(gt, list):
+        gt   = np.concatenate([tensor.numpy()>0.5 for tensor in gt  ], axis=0).reshape((-1, 5))
+        pred = np.concatenate([tensor.numpy()>0.5 for tensor in pred], axis=0).reshape((-1, 5))
+    if torch.is_tensor(gt):
+        gt = gt.numpy()
+        pred = pred.numpy()
+    gt   = gt.round().astype(np.int32).sum(1)
+    pred = pred.round().astype(np.int32).sum(1)
+    return (gt == pred).sum()
+
 
 if __name__ == '__main__':
     a = np.array([1, 3, 1, 2, 2, 1, 1, 3, 1])
@@ -73,4 +87,10 @@ if __name__ == '__main__':
     b = torch.tensor([4, 4, 4, 4, 4, 4, 4, 4, 4, 4])
     print(confusion_matrix(a, b))
     print(kappa_score(a, b))
+    
+    # check correctedness
+    a = torch.rand(32, 5)
+    b = torch.rand(32, 5)
+    with torch.no_grad():
+        print(correct(a, b))
 

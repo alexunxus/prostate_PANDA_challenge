@@ -12,3 +12,14 @@ def shuffle_two_arrays(imgs, labels):
     zip_obj = list(zip(imgs, labels))
     random.shuffle(zip_obj)
     return zip(*zip_obj)
+
+def binary_search(li, x, lo, hi):
+    mid = (lo+hi)//2
+    if li[mid][0] == x:
+        return li[mid][1]
+    if mid == hi:
+        raise ValueError(f"{x} is not in list!")
+    if li[mid][0] > x:
+        return binary_search(li, x, lo, mid)
+    else:
+        return binary_search(li, x, mid+1, hi)

@@ -15,7 +15,7 @@ import torch
 from torchvision import transforms
 
 # customized library
-from .util import concat_tiles
+from .util import concat_tiles, binary_search
 from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
 
 class PathoAugmentation(object):
@@ -105,11 +105,15 @@ class TileDataset:
         self.cur_pos = 0
     
     def _get_isup(self):
-        # get ISUP scores of each slide from a csv file
         print("=============Get ISUP scores=================")
         t1 = time.time()
         df = pd.read_csv(self.label_path)
-        self.isup_scores = [ df.loc[df["image_id"] == name, 'isup_grade'].item() for name in self.img_names]
+        
+        names = df['image_id'].to_numpy()
+        grades = df['isup_grade'].to_numpy()
+        li = list(zip(names, grades))
+        
+        self.isup_scores = [ binary_search(li, name, 0, len(li)) for name in self.img_names]
         print(f"Loading ISUP scores takes {time.time()-t1} seconds")
     
     def _get_coord(self):
@@ -179,17 +183,21 @@ class TileDataset:
     
     def _get_one_cat_tile(self, idx, this_slide):
         ps, ts = self.patch_size, self.tile_size
+        level = 0
+        if ps > 256:
+            assert ps%256 == 0
+            level = int(math.log(ps//256, 2))
         chosen_indexs = np.random.choice(len(self.coords[idx]), min(ts**2, len(self.coords[idx])), replace=False)
         foreground_coord = [self.coords[idx][chosen_index] for chosen_index in chosen_indexs]
-        tiles = [np.array(this_slide.slide.read_region_mt(location=(x*ps, y*ps),
-                                                          size = (ps, ps),
-                                                          level = 0))[:,:,:3] for x, y in foreground_coord]
+        tiles = [this_slide.get_patch_with_resize(coord=(x*ps, y*ps), 
+                                                  src_sz=(ps, ps), 
+                                                  dst_sz=(256, 256)) for x, y in foreground_coord]
         if self.aug is not None:
             tiles = self.aug.discrete_aug(images=(tiles))
             cat_tile = self.aug.complete_aug(images=[concat_tiles(tiles, patch_size=ps, tile_sz=6)])[0]
             cat_tile = cat_tile.astype(np.float32)/255.
         else:
-            cat_tile = concat_tiles(tiles, patch_size=ps, tile_sz=6).astype(np.float32)/255.
+            cat_tile = concat_tiles(tiles, patch_size=256, tile_sz=6).astype(np.float32)/255.
         return cat_tile
     
     def __next__(self):

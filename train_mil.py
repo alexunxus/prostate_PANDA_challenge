@@ -7,12 +7,13 @@ import time
 # torch library
 import torch
 from torch.utils.data import DataLoader
+from warmup_scheduler import GradualWarmupScheduler
 
 # customized libraries
 from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test, PathoAugmentation
 from mil_model.config import get_cfg_defaults
-from mil_model.resnet_model import BaselineResNet50, build_optimizer
-from mil_model.loss import get_bceloss, kappa_metric
+from mil_model.resnet_model import BaselineResNet50, CustomModel, build_optimizer
+from mil_model.loss import get_bceloss, kappa_metric, correct
 from mil_model.util import shuffle_two_arrays
 
 if __name__ == "__main__":
@@ -64,10 +65,19 @@ if __name__ == "__main__":
         resume_path = cfg.MODEL.RESUME_FROM
     else:
         resume_path = None
-    model = BaselineResNet50(num_grade=cfg.DATASET.NUM_GRADE, resume_from=resume_path).cuda()
+    
+    if cfg.MODEL.BACKBONE == 'baseline':
+        model = BaselineResNet50(num_grade=cfg.DATASET.NUM_GRADE, resume_from=resume_path).cuda()
+    else:
+        model = CustomModel(backbone=cfg.MODEL.BACKBONE, num_grade=cfg.DATASET.NUM_GRADE, resume_from=resume_path).cuda()
 
     # prepare optimizer
-    optimizer = build_optimizer(type=cfg.MODEL.OPTIMIZER, model=model, lr=cfg.MODEL.LEARNING_RATE)
+    warmup_factor = 10
+    warmup_epo = 1
+    n_epochs = cfg.MODEL.EPOCHS
+    optimizer = build_optimizer(type=cfg.MODEL.OPTIMIZER, model=model, lr=cfg.MODEL.LEARNING_RATE/warmup_factor)
+    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epochs-warmup_epo)
+    scheduler = GradualWarmupScheduler(optimizer, multiplier=warmup_factor, total_epoch=warmup_epo, after_scheduler=scheduler_cosine)
 
     # criterion
     criterion = get_bceloss()
@@ -76,7 +86,20 @@ if __name__ == "__main__":
     # will save the model with best loss only and have the patience=10
     train_losses = []
     test_losses  = []
+    train_acc = []
+    test_acc  = []
     kappa_values = []
+    resume_from_epoch = 0
+    if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
+        cfg.MODEL.RESUME_FROM is not None):
+        df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
+        train_losses = list(df['train'])
+        test_losses  = list(df['test'])
+        if 'train acc' in df.columns:
+            train_acc = list(df['train acc'])
+            test_acc  = list(df['test acc'])
+        kappa_values = list(df['kappa'])
+        resume_from_epoch = len(train_losses)
     best_loss = 1000
     best_kappa= -10
     best_idx  = 0
@@ -84,17 +107,21 @@ if __name__ == "__main__":
 
     # training pipeline
     print("==============Start training=================")
-    for epoch in range(cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
+    for epoch in range(resume_from_epoch, cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
+        scheduler.step(epoch-1)
         total_loss = 0.0
+        train_correct = 0.
         pbar = tqdm(enumerate(train_loader, 0))
+        
         end_time = time.time()
+        
         model.train()
         for i, data in pbar:
 
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
 
-            # change shape of array to (B, imgs_shape) and (B, 5), shuffling them
+            # change shape of array to (B, imgs_shape) and (B, 5)
             #inputs = inputs.view(-1, *inputs.shape[2:])
             #labels = labels.view(-1, *labels.shape[2:])
             
@@ -114,8 +141,8 @@ if __name__ == "__main__":
             loss.backward()
 
             # debug
-            if cfg.SOURCE.DEBUG:
-                print(model.backbone.conv1.weight.grad)
+            #if cfg.SOURCE.DEBUG:
+            #    print(model.backbone.conv1.weight.grad)
 
             optimizer.step()
             gpu_time = time.time()-end_time
@@ -123,10 +150,13 @@ if __name__ == "__main__":
             # print statistics
             total_loss   += loss.item()
             running_loss =  loss.item()
+
+            train_correct += correct(outputs.detach().cpu(), labels.detach().cpu())
             
             pbar.set_postfix_str(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
         train_losses.append(total_loss/len(train_loader))
+        train_acc.append(train_correct/len(train_dataset))
         
         # compute test loss
         test_total_loss = 0.0
@@ -148,12 +178,18 @@ if __name__ == "__main__":
                 predictions.append(outputs.cpu())
                 groundtruth.append(labels.cpu())
         test_losses.append(test_total_loss/len(test_loader))
+        test_acc.append(correct(predictions, groundtruth)/(len(predictions)*predictions[0].shape[0]))
         
         # compute quadratic kappa value:
         kappa = kappa_metric(groundtruth, predictions)
         kappa_values.append(kappa)
-        print(f"[{epoch}/{cfg.MODEL.EPOCHS}]training loss = {train_losses[-1]}, testing loss={test_losses[-1]}, kappa={kappa}")
+        print(f"[{epoch}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]}"+
+              f", testing loss={test_losses[-1]}, kappa={kappa}, train acc={train_acc[-1]}, test acc = {test_acc[-1]}")
         
+        if cfg.SOURCE.DEBUG:
+            print("Debugging, not saving...")
+            continue
+
         update_loss  = False
         update_kappa = False
         
@@ -174,14 +210,15 @@ if __name__ == "__main__":
                 print(f"Early stopping at epoch {epoch}")
                 break
         
-    
-    print('======Saving training curves=======')
-    loss_dict = {}
-    loss_dict["train"] = train_losses
-    loss_dict["test"]  = test_losses
-    loss_dict["kappa"] = kappa_values
-    df = pd.DataFrame(loss_dict)
-    df.to_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
+        print('======Saving training curves=======')
+        loss_dict = {}
+        loss_dict["train"]     = train_losses
+        loss_dict["test"]      = test_losses
+        loss_dict["kappa"]     = kappa_values
+        loss_dict["train acc"] = train_acc
+        loss_dict["test acc"]  = test_acc
+        df = pd.DataFrame(loss_dict)
+        df.to_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
     
     print('Finished Training')
 
