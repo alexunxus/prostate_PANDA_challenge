@@ -194,7 +194,7 @@ class TileDataset:
                                                   dst_sz=(256, 256)) for x, y in foreground_coord]
         if self.aug is not None:
             tiles = self.aug.discrete_aug(images=(tiles))
-            cat_tile = self.aug.complete_aug(images=[concat_tiles(tiles, patch_size=ps, tile_sz=6)])[0]
+            cat_tile = self.aug.complete_aug(images=[concat_tiles(tiles, patch_size=256, tile_sz=6)])[0]
             cat_tile = cat_tile.astype(np.float32)/255.
         else:
             cat_tile = concat_tiles(tiles, patch_size=256, tile_sz=6).astype(np.float32)/255.

@@ -2,11 +2,12 @@ from yacs.config import CfgNode as CN
 
 _C = CN() # Node, lv0
 _C.SYSTEM = CN() # None, lv1
-_C.SYSTEM.DEVICES = [6]
+_C.SYSTEM.DEVICES = [0]
 
 _C.SOURCE = CN()
 _C.SOURCE.RESULT_DIR = "" # Full path to store the result
 _C.SOURCE.DEBUG = False
+_C.SOURCE.TENSORBOARD = True
 
 _C.DATASET = CN()
 _C.DATASET.JSON_DIR        = './foreground/data_512/'
@@ -20,7 +21,7 @@ _C.DATASET.TILE_SIZE       = 6
 
 _C.MODEL = CN()
 _C.MODEL.BACKBONE          = 'R-50-st' #'baseline' # R-50-v1, R-50-v2, R-50-xt
-_C.MODEL.BATCH_SIZE        = 8
+_C.MODEL.BATCH_SIZE        = 4
 _C.MODEL.EPOCHS            = 500
 _C.MODEL.LEARNING_RATE     = 3e-4
 _C.MODEL.USE_PRETRAIN      = True

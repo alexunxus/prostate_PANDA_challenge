@@ -8,6 +8,7 @@ import time
 import torch
 from torch.utils.data import DataLoader
 from warmup_scheduler import GradualWarmupScheduler
+from torch.utils.tensorboard import SummaryWriter
 
 # customized libraries
 from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test, PathoAugmentation
@@ -57,7 +58,7 @@ if __name__ == "__main__":
     # prepare for checkpoint info
     if not os.path.isdir(cfg.MODEL.CHECKPOINT_PATH):
         os.makedirs(cfg.MODEL.CHECKPOINT_PATH)
-    checkpoint_prefix = f"{cfg.MODEL.BACKBONE}_{cfg.DATASET.TILE_SIZE}_"
+    checkpoint_prefix = f"{cfg.MODEL.BACKBONE}_{cfg.DATASET.TILE_SIZE}_{cfg.DATASET.PATCH_SIZE}"
 
     # prepare resnet50, resume from checkpoint
     print("==============Building model=================")
@@ -81,6 +82,10 @@ if __name__ == "__main__":
 
     # criterion
     criterion = get_bceloss()
+
+    # tensorboard writer
+    if cfg.SOURCE.TENSORBOARD:
+        writer = SummaryWriter()
     
     # prepare training and testing loss
     # will save the model with best loss only and have the patience=10
@@ -108,7 +113,6 @@ if __name__ == "__main__":
     # training pipeline
     print("==============Start training=================")
     for epoch in range(resume_from_epoch, cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
-        scheduler.step(epoch-1)
         total_loss = 0.0
         train_correct = 0.
         pbar = tqdm(enumerate(train_loader, 0))
@@ -121,10 +125,6 @@ if __name__ == "__main__":
             # get the inputs; data is a list of [inputs, labels]
             inputs, labels = data
 
-            # change shape of array to (B, imgs_shape) and (B, 5)
-            #inputs = inputs.view(-1, *inputs.shape[2:])
-            #labels = labels.view(-1, *labels.shape[2:])
-            
             inputs = inputs.cuda()
             labels = labels.cuda()
             data_time = time.time()-end_time
@@ -135,17 +135,19 @@ if __name__ == "__main__":
 
             # forward + backward + optimize
             outputs = model(inputs)
-    
+
             # compute loss and backpropagation
             loss = criterion(outputs, labels)
             loss.backward()
 
             # debug
-            #if cfg.SOURCE.DEBUG:
-            #    print(model.backbone.conv1.weight.grad)
+            if cfg.SOURCE.DEBUG:
+                print(model.backbone.conv1.weight.grad)
 
             optimizer.step()
             gpu_time = time.time()-end_time
+
+            scheduler.step()
 
             # print statistics
             total_loss   += loss.item()
@@ -155,6 +157,11 @@ if __name__ == "__main__":
             
             pbar.set_postfix_str(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
+            
+            # tensorboard writer
+            if cfg.SOURCE.TENSORBOARD:
+                writer.add_scalar("Running loss", running_loss, i)
+
         train_losses.append(total_loss/len(train_loader))
         train_acc.append(train_correct/len(train_dataset))
         
@@ -186,6 +193,14 @@ if __name__ == "__main__":
         print(f"[{epoch}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]}"+
               f", testing loss={test_losses[-1]}, kappa={kappa}, train acc={train_acc[-1]}, test acc = {test_acc[-1]}")
         
+        if cfg.SOURCE.TENSORBOARD:
+            writer.add_scalar("Training loss", train_losses[-1], epoch)
+            writer.add_scalar("Training acc", train_acc[-1], epoch)
+            writer.add_scalar("Testing loss", test_losses[-1], epoch)
+            writer.add_scalar("Testing acc", test_acc[-1], epoch)
+            writer.add_scalar("Test Kappa", kappa_values[-1], epoch)
+            writer.add_scalar("Learning rate", optimizer.param_groups[0]['lr'], epoch)
+
         if cfg.SOURCE.DEBUG:
             print("Debugging, not saving...")
             continue
