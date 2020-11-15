@@ -11,7 +11,7 @@ from warmup_scheduler import GradualWarmupScheduler
 from torch.utils.tensorboard import SummaryWriter
 
 # customized libraries
-from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test, PathoAugmentation
+from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test
 from mil_model.config import get_cfg_defaults
 from mil_model.resnet_model import BaselineResNet50, CustomModel, build_optimizer
 from mil_model.loss import get_bceloss, kappa_metric, correct
@@ -96,7 +96,9 @@ if __name__ == "__main__":
     kappa_values = []
     resume_from_epoch = 0
     if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
-        cfg.MODEL.RESUME_FROM is not None):
+        cfg.MODEL.RESUME_FROM != ''):
+        csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
+        print(f"Loading csv from {csv_path}")
         df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
         train_losses = list(df['train'])
         test_losses  = list(df['test'])
@@ -110,9 +112,16 @@ if __name__ == "__main__":
     best_idx  = 0
     patience  = 0
 
+    # this zero gradient update is needed to avoid a warning message, issue #8.
+    optimizer.zero_grad()
+    optimizer.step()
+
     # training pipeline
     print("==============Start training=================")
     for epoch in range(resume_from_epoch, cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
+        # update scheduler 
+        scheduler.step(epoch)
+        
         total_loss = 0.0
         train_correct = 0.
         pbar = tqdm(enumerate(train_loader, 0))
@@ -133,7 +142,7 @@ if __name__ == "__main__":
             # zero the parameter gradients
             optimizer.zero_grad()
 
-            # forward + backward + optimize
+            # forward + backward + optimizer
             outputs = model(inputs)
 
             # compute loss and backpropagation
@@ -146,8 +155,6 @@ if __name__ == "__main__":
 
             optimizer.step()
             gpu_time = time.time()-end_time
-
-            scheduler.step()
 
             # print statistics
             total_loss   += loss.item()
@@ -190,8 +197,8 @@ if __name__ == "__main__":
         # compute quadratic kappa value:
         kappa = kappa_metric(groundtruth, predictions)
         kappa_values.append(kappa)
-        print(f"[{epoch}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]}"+
-              f", testing loss={test_losses[-1]}, kappa={kappa}, train acc={train_acc[-1]}, test acc = {test_acc[-1]}")
+        print(f"[{epoch}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]:.5f}"+
+              f", testing loss={test_losses[-1]:.5f}, kappa={kappa:.5f}, train acc={train_acc[-1]:.5f}, test acc = {test_acc[-1]:.5f}")
         
         if cfg.SOURCE.TENSORBOARD:
             writer.add_scalar("Training loss", train_losses[-1], epoch)
@@ -233,7 +240,7 @@ if __name__ == "__main__":
         loss_dict["train acc"] = train_acc
         loss_dict["test acc"]  = test_acc
         df = pd.DataFrame(loss_dict)
-        df.to_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
+        df.to_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"), index=False)
     
     print('Finished Training')
 

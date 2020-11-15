@@ -4,11 +4,18 @@ import json
 import pandas as pd
 import time
 import random
+from sklearn.model_selection import train_test_split
+
+# iaa
 from imgaug import augmenters as iaa
 import imgaug as ia
 import math
 ia.seed(math.floor(time.time()))
-from sklearn.model_selection import train_test_split
+
+# albumentations
+import albumentations
+import cv2
+import skimage.io
 
 # torch
 import torch
@@ -19,27 +26,18 @@ from .util import concat_tiles, binary_search
 from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
 
 class PathoAugmentation(object):
+
     ''' Customized augmentation method:
         discrete augmentation: do these augmentation to each 6*6 tiles in the image respectively
         complete augmentation: do these augmentation to the whole image at one time
     '''
-    sometimes = lambda aug: iaa.Sometimes(0.5, aug)
-    discrete_aug = iaa.Sequential([iaa.Fliplr(0.5, name="FlipLR"),
-                               iaa.Flipud(0.5, name="FlipUD"),
-                               iaa.OneOf([iaa.Affine(rotate = 90),
-                                          iaa.Affine(rotate = 180),
-                                          iaa.Affine(rotate = 270)]),
-                               sometimes(iaa.Affine(
-                                   # scale = (0.8,1.2),
-                                   translate_percent = (-0.2, 0.2),
-                                   rotate = (-15, 15),
-                                   mode = 'wrap'
-                               ))
-                              ])
-    complete_aug = iaa.Sequential([
-        sometimes(iaa.AddToHueAndSaturation((-25, 25), per_channel=True)),
-        sometimes(iaa.Affine(scale=(0.8, 1.2)))
-    ])
+    discrete_aug = albumentations.Compose([
+                                           albumentations.Transpose(p=0.5),
+                                           albumentations.VerticalFlip(p=0.5),
+                                           albumentations.HorizontalFlip(p=0.5),
+                                           albumentations.transforms.Rotate(limit=15, border_mode=cv2.BORDER_WRAP, p=0.5)])
+    complete_aug = albumentations.Compose([]) #albumentations.augmentations.transforms.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=15, val_shift_limit=15, p=0.5)
+
 
 
 def get_train_test(json_dir, ratio=0.1):
@@ -153,21 +151,26 @@ class TileDataset:
                 label: ONE tensor
         '''
         self.cur_pos = idx
-
-        # get image
-        this_slide = Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
+        
+        if self.patch_size == 1024:
+            # get image(skimage version -- faster)
+            this_slide = skimage.io.MultiImage(os.path.join(self.img_dir, self.img_names[idx]+".tiff"))[1]
+        
+        else:
+            # get image(openslide version -- slower)
+            this_slide = Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
 
         # cat tile is of type "np.float32", had been normalized to 1
         # test time augmentation: find 4 images and will average their predicted values
         if not self.ensemble and not self.is_test:
             img = torch.from_numpy(self._get_one_cat_tile(idx, this_slide).transpose((2, 0, 1))).float()
-            if self.preproc is not None:
-                img = self.preproc(img)
+            #if self.preproc is not None:
+            #    img = self.preproc(img)
         else:
             cat_tiles = [self._get_one_cat_tile(idx, this_slide)for i in range(self.dup)]
             img = [torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float() for cat_tile in cat_tiles]
-            if self.preproc is not None:
-                img = [self.preproc(im) for im in img]
+            #if self.preproc is not None:
+            #    img = [self.preproc(im) for im in img]
             img = torch.stack(img)
 
         # get label
@@ -182,6 +185,17 @@ class TileDataset:
         return img, label
     
     def _get_one_cat_tile(self, idx, this_slide):
+        '''
+        Argument: 
+            this_slide: 
+                1. openslide object(slower) OR
+                2. skimage(faster)
+            idx: int, position of the idx-th tuple in coordinate list
+        Return: cat_tile: an numpy array sized 1536*1536*3 with type float32, normalized to 0-1
+
+        If the patch size is 256, or 512, then get patch from openslide object
+        If the patch size is 1024, then get patch from the first image pyramid of skimage
+        '''
         ps, ts = self.patch_size, self.tile_size
         level = 0
         if ps > 256:
@@ -189,12 +203,19 @@ class TileDataset:
             level = int(math.log(ps//256, 2))
         chosen_indexs = np.random.choice(len(self.coords[idx]), min(ts**2, len(self.coords[idx])), replace=False)
         foreground_coord = [self.coords[idx][chosen_index] for chosen_index in chosen_indexs]
-        tiles = [this_slide.get_patch_with_resize(coord=(x*ps, y*ps), 
-                                                  src_sz=(ps, ps), 
-                                                  dst_sz=(256, 256)) for x, y in foreground_coord]
+        
+        if isinstance(this_slide, Slide_OSread):
+            tiles = [this_slide.get_patch_with_resize(coord=(x*ps, y*ps), 
+                                                      src_sz=(ps, ps), 
+                                                      dst_sz=(256, 256)) for x, y in foreground_coord]
+        elif isinstance(this_slide, np.ndarray):
+            tiles = [this_slide[y*256:(y+1)*256, x*256:(x+1)*256] for x, y in foreground_coord]
+        else:
+            raise ValueError(f"Unknown slide type: {type(this_slide)}")
+        
         if self.aug is not None:
-            tiles = self.aug.discrete_aug(images=(tiles))
-            cat_tile = self.aug.complete_aug(images=[concat_tiles(tiles, patch_size=256, tile_sz=6)])[0]
+            tiles = [self.aug.discrete_aug(image=tile)['image'] for tile in tiles]
+            cat_tile = self.aug.complete_aug(image=concat_tiles(tiles, patch_size=256, tile_sz=6))['image']
             cat_tile = cat_tile.astype(np.float32)/255.
         else:
             cat_tile = concat_tiles(tiles, patch_size=256, tile_sz=6).astype(np.float32)/255.
