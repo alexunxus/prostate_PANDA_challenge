@@ -15,7 +15,6 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 
 # customized libraries
-from hephaestus.models.pyt_resnet.resnet import resnet50
 from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
 
 

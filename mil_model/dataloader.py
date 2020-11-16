@@ -36,7 +36,7 @@ class PathoAugmentation(object):
                                            albumentations.VerticalFlip(p=0.5),
                                            albumentations.HorizontalFlip(p=0.5),
                                            albumentations.transforms.Rotate(limit=15, border_mode=cv2.BORDER_WRAP, p=0.5)])
-    complete_aug = albumentations.Compose([]) #albumentations.augmentations.transforms.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=15, val_shift_limit=15, p=0.5)
+    complete_aug = albumentations.Compose([albumentations.augmentations.transforms.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=15, val_shift_limit=15, p=0.5)]) #albumentations.augmentations.transforms.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=15, val_shift_limit=15, p=0.5)
 
 
 
@@ -63,8 +63,7 @@ class TileDataset:
                  dup = 4, 
                  is_test=False, 
                  aug=None, 
-                 preproc=None, 
-                 train_ensemble=False):
+                 preproc=None):
         '''
         Arg: img_names: string, the slide names from train_test split
              img_dir: path string, the directory of the slide tiff files
@@ -74,7 +73,6 @@ class TileDataset:
              dup: int, will get $dup concatenated tiles from one slide to save slide reading time
              aug: augmentation function
              preproc: torch transform object, default: resnet_preproc
-             train_ensemble: one training image will generate $dup number for concatenated images
         '''
         self.json_dir   = json_dir
         self.img_dir    = img_dir
@@ -85,7 +83,6 @@ class TileDataset:
         self.is_test    = is_test
         self.aug        = aug
         self.preproc    = preproc
-        self.ensemble   = train_ensemble
         
         # resnet preprocessing
         if self.preproc is None:
@@ -140,10 +137,7 @@ class TileDataset:
         Ultimately, the preprocessed image will be returned altogether with the groundtruth label
         
         Return:
-            Training time(unsemble version):
-                imgs: list of tensor with length self.dup
-                labels: list of tensor with length self.dup
-            Training time(non-unsemble version):
+            Training time:
                 imgs: a tensor
                 label: a tensor
             Testing time:
@@ -162,15 +156,15 @@ class TileDataset:
 
         # cat tile is of type "np.float32", had been normalized to 1
         # test time augmentation: find 4 images and will average their predicted values
-        if not self.ensemble and not self.is_test:
+        if not self.is_test:
             img = torch.from_numpy(self._get_one_cat_tile(idx, this_slide).transpose((2, 0, 1))).float()
-            #if self.preproc is not None:
-            #    img = self.preproc(img)
+            if self.preproc is not None:
+                img = self.preproc(img)
         else:
             cat_tiles = [self._get_one_cat_tile(idx, this_slide)for i in range(self.dup)]
             img = [torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float() for cat_tile in cat_tiles]
-            #if self.preproc is not None:
-            #    img = [self.preproc(im) for im in img]
+            if self.preproc is not None:
+                img = [self.preproc(im) for im in img]
             img = torch.stack(img)
 
         # get label
@@ -178,8 +172,6 @@ class TileDataset:
         for i in range(0, self.isup_scores[idx]):
             label[i] = 1
         label = torch.from_numpy(label).float()
-        if not self.is_test and self.ensemble:
-            label = label.repeat(self.dup, 1)
         
         self.cur_pos = (self.cur_pos+1)%len(self)
         return img, label
@@ -193,32 +185,35 @@ class TileDataset:
             idx: int, position of the idx-th tuple in coordinate list
         Return: cat_tile: an numpy array sized 1536*1536*3 with type float32, normalized to 0-1
 
+        No matter the value of patch size, the acquired image patches will be resized to 256*256 and
+        be concatenated to a 1536*1536*3 image
         If the patch size is 256, or 512, then get patch from openslide object
         If the patch size is 1024, then get patch from the first image pyramid of skimage
         '''
         ps, ts = self.patch_size, self.tile_size
-        level = 0
-        if ps > 256:
-            assert ps%256 == 0
-            level = int(math.log(ps//256, 2))
+        assert ps%256 == 0
         chosen_indexs = np.random.choice(len(self.coords[idx]), min(ts**2, len(self.coords[idx])), replace=False)
         foreground_coord = [self.coords[idx][chosen_index] for chosen_index in chosen_indexs]
         
+        # this_slide is slide osread, get patch by Slide_OSread method
         if isinstance(this_slide, Slide_OSread):
             tiles = [this_slide.get_patch_with_resize(coord=(x*ps, y*ps), 
                                                       src_sz=(ps, ps), 
                                                       dst_sz=(256, 256)) for x, y in foreground_coord]
+        # this_slide is skimage multiimage object(essentially np.ndarray), get patch directly by subindexing
         elif isinstance(this_slide, np.ndarray):
             tiles = [this_slide[y*256:(y+1)*256, x*256:(x+1)*256] for x, y in foreground_coord]
         else:
             raise ValueError(f"Unknown slide type: {type(this_slide)}")
         
+        # discrete augmentation will be performed image-wise before concatenation
+        # complete augmentation will be performed to the concatenated big image 
         if self.aug is not None:
             tiles = [self.aug.discrete_aug(image=tile)['image'] for tile in tiles]
-            cat_tile = self.aug.complete_aug(image=concat_tiles(tiles, patch_size=256, tile_sz=6))['image']
+            cat_tile = self.aug.complete_aug(image=concat_tiles(tiles, patch_size=256, tile_sz=self.tile_size))['image']
             cat_tile = cat_tile.astype(np.float32)/255.
         else:
-            cat_tile = concat_tiles(tiles, patch_size=256, tile_sz=6).astype(np.float32)/255.
+            cat_tile = concat_tiles(tiles, patch_size=256, tile_sz=self.tile_size).astype(np.float32)/255.
         return cat_tile
     
     def __next__(self):

@@ -95,22 +95,25 @@ if __name__ == "__main__":
     test_acc  = []
     kappa_values = []
     resume_from_epoch = 0
-    if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
-        cfg.MODEL.RESUME_FROM != ''):
-        csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
-        print(f"Loading csv from {csv_path}")
-        df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
-        train_losses = list(df['train'])
-        test_losses  = list(df['test'])
-        if 'train acc' in df.columns:
-            train_acc = list(df['train acc'])
-            test_acc  = list(df['test acc'])
-        kappa_values = list(df['kappa'])
-        resume_from_epoch = len(train_losses)
     best_loss = 1000
     best_kappa= -10
     best_idx  = 0
     patience  = 0
+    if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
+        cfg.MODEL.RESUME_FROM != ''):
+        csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
+        df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
+        kappa_values = list(df['kappa'])
+        best_kappa = max(kappa_values)
+        resume_from_epoch = best_idx = np.argmax(np.array(best_kappa))
+        kappa_values = kappa_values[:best_idx+1]
+        train_losses = list(df['train'])[:best_idx+1]
+        test_losses  = list(df['test'])[:best_idx+1]
+        if 'train acc' in df.columns:
+            train_acc = list(df['train acc'])[:best_idx+1]
+            test_acc  = list(df['test acc'])[:best_idx+1]
+        best_loss = min(test_losses)
+        print(f"Loading csv from {csv_path}, best test loss = {best_loss}, best kappa = {best_kappa}, epoch = {resume_from_epoch}")
 
     # this zero gradient update is needed to avoid a warning message, issue #8.
     optimizer.zero_grad()
@@ -118,9 +121,13 @@ if __name__ == "__main__":
 
     # training pipeline
     print("==============Start training=================")
-    for epoch in range(resume_from_epoch, cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
+    for epoch in range(0, cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
         # update scheduler 
-        scheduler.step(epoch)
+       if epoch <= resume_from_epoch:
+            scheduler.step()
+            optimizer.step()
+            continue
+        scheduler.step()
         
         total_loss = 0.0
         train_correct = 0.
@@ -162,7 +169,7 @@ if __name__ == "__main__":
 
             train_correct += correct(outputs.detach().cpu(), labels.detach().cpu())
             
-            pbar.set_postfix_str(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
+            pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
             
             # tensorboard writer
@@ -197,7 +204,7 @@ if __name__ == "__main__":
         # compute quadratic kappa value:
         kappa = kappa_metric(groundtruth, predictions)
         kappa_values.append(kappa)
-        print(f"[{epoch}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]:.5f}"+
+        print(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]:.5f}"+
               f", testing loss={test_losses[-1]:.5f}, kappa={kappa:.5f}, train acc={train_acc[-1]:.5f}, test acc = {test_acc[-1]:.5f}")
         
         if cfg.SOURCE.TENSORBOARD:

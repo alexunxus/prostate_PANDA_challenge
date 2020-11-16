@@ -1,4 +1,5 @@
 from torchvision.models import resnet50, resnext50_32x4d
+from efficientnet_pytorch import EfficientNet
 import torch.nn as nn
 import torch.optim
 import os
@@ -40,10 +41,14 @@ class BaselineResNet50(nn.Module):
 def get_backbone(string, pretrained=True):
     if string == "R-50-xt":
         return resnext50_32x4d(pretrained=pretrained)
-    if string == "R-50-st":
+    elif string == "R-50-st":
         torch.hub.list('zhanghang1989/ResNeSt', force_reload=True)
         # load pretrained models, using ResNeSt-50 as an example
         return torch.hub.load('zhanghang1989/ResNeSt', 'resnest50', pretrained=pretrained)
+    elif string == 'enet-b0':
+        return EfficientNet.from_pretrained('efficientnet-b0')
+    elif string == 'enet-b1':
+        return EfficientNet.from_pretrained('efficientnet-b1')
     else:
         raise ValueError(f"Unknown backbone type {string}!")
 
@@ -82,32 +87,3 @@ def build_optimizer(type, model, lr):
         return torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999))
     else:
         raise ValueError(f"Unknown optimizer type {type}")
-
-class enetv2(nn.Module):
-    def __init__(self, backbone, out_dim):
-        super(enetv2, self).__init__()
-        self.enet = enet.EfficientNet.from_name(backbone)
-        self.myfc = nn.Linear(self.enet._fc.in_features, out_dim)
-        self.enet._fc = nn.Identity()
-
-    def extract(self, x):
-        return self.enet(x)
-
-    def forward(self, x):
-        x = self.extract(x)
-        x = self.myfc(x)
-        return x
-    
-    
-def load_models(model_files):
-    models = []
-    for model_f in model_files:
-        model_f = os.path.join(model_dir, model_f)
-        backbone = 'efficientnet-b0'
-        model = enetv2(backbone, out_dim=5)
-        model.load_state_dict(torch.load(model_f, map_location=lambda storage, loc: storage), strict=True)
-        model.eval()
-        model.to(device)
-        models.append(model)
-        print(f'{model_f} loaded!')
-    return models
