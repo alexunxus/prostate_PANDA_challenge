@@ -39,6 +39,9 @@ class PathoAugmentation(object):
     complete_aug = albumentations.Compose([albumentations.augmentations.transforms.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=15, val_shift_limit=15, p=0.5)]) #albumentations.augmentations.transforms.HueSaturationValue(hue_shift_limit=15, sat_shift_limit=15, val_shift_limit=15, p=0.5)
 
 
+def get_resnet_preproc_fn():
+    return  transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                 std =[0.229, 0.224, 0.225])
 
 def get_train_test(json_dir, ratio=0.1):
     ''' Arg: json_dir: string the path of the json file
@@ -83,11 +86,6 @@ class TileDataset:
         self.is_test    = is_test
         self.aug        = aug
         self.preproc    = preproc
-        
-        # resnet preprocessing
-        if self.preproc is None:
-            self.preproc = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                                std =[0.229, 0.224, 0.225])
         
         # the following 3 list should be kept in the same order!
         self.img_names   = img_names
@@ -141,7 +139,7 @@ class TileDataset:
                 imgs: a tensor
                 label: a tensor
             Testing time:
-                imgs: list of tensor with length self.dup --> will be averaged after passing to model
+                imgs: a stacked tensor with shape (4, *img_shape)
                 label: ONE tensor
         '''
         self.cur_pos = idx
@@ -151,7 +149,7 @@ class TileDataset:
             this_slide = skimage.io.MultiImage(os.path.join(self.img_dir, self.img_names[idx]+".tiff"))[1]
         
         else:
-            # get image(openslide version -- slower)
+            # get image(openslide version -- slower), but still fater than skimage get image by [0] pyramid
             this_slide = Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
 
         # cat tile is of type "np.float32", had been normalized to 1
@@ -178,7 +176,7 @@ class TileDataset:
     
     def _get_one_cat_tile(self, idx, this_slide):
         '''
-        Argument: 
+        Arguments: 
             this_slide: 
                 1. openslide object(slower) OR
                 2. skimage(faster)

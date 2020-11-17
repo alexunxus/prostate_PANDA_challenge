@@ -2,7 +2,7 @@ from yacs.config import CfgNode as CN
 
 _C = CN() # Node, lv0
 _C.SYSTEM = CN() # None, lv1
-_C.SYSTEM.DEVICES = [7]
+_C.SYSTEM.DEVICES = [6]
 
 _C.SOURCE = CN()
 _C.SOURCE.RESULT_DIR  = "" # Full path to store the result
@@ -20,7 +20,7 @@ _C.DATASET.PATCH_SIZE      = 1024
 _C.DATASET.TILE_SIZE       = 6
 
 _C.MODEL = CN()
-_C.MODEL.BACKBONE          = 'enet-b1' #'baseline', 'R-50-xt', 'R-50-st', 'enet-b0', 'enet-b1'
+_C.MODEL.BACKBONE          = 'R-50-st' #'baseline', 'R-50-xt', 'R-50-st', 'enet-b0', 'enet-b1'
 _C.MODEL.BATCH_SIZE        = 8
 _C.MODEL.EPOCHS            = 50
 _C.MODEL.LEARNING_RATE     = 3e-4
@@ -29,7 +29,7 @@ _C.MODEL.NORM_USE          = "bn" # bn, gn
 _C.MODEL.OPTIMIZER         = "Adam" #"SGD" # SGD, Adam
 _C.MODEL.CRITERION         = "BCE"
 _C.MODEL.CHECKPOINT_PATH   = '/workspace/prostate_isup/checkpoint/'
-_C.MODEL.RESUME_FROM       = '/workspace/prostate_isup/checkpoint/enet-b1_6_1024best_kappa.pth'
+_C.MODEL.RESUME_FROM       = '/workspace/prostate_isup/checkpoint/R-50-st_6_1024best_kappa.pth'
 _C.MODEL.PATIENCE          = 8
 
 def get_cfg_defaults():
