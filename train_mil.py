@@ -100,12 +100,12 @@ if __name__ == "__main__":
     best_idx  = 0
     patience  = 0
     if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
-        cfg.MODEL.RESUME_FROM != ''):
+        cfg.MODEL.RESUME_FROM):
         csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
         df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
         kappa_values = list(df['kappa'])
         best_kappa = max(kappa_values)
-        resume_from_epoch = best_idx = np.argmax(np.array(best_kappa))
+        resume_from_epoch = best_idx = np.argmax(np.array(kappa_values))
         kappa_values = kappa_values[:best_idx+1]
         train_losses = list(df['train'])[:best_idx+1]
         test_losses  = list(df['test'])[:best_idx+1]
@@ -122,8 +122,8 @@ if __name__ == "__main__":
     # training pipeline
     print("==============Start training=================")
     for epoch in range(0, cfg.MODEL.EPOCHS):  # loop over the dataset multiple times
-        # update scheduler 
-       if epoch <= resume_from_epoch:
+        # update scheduler  
+        if epoch <= resume_from_epoch:
             scheduler.step()
             optimizer.step()
             continue
