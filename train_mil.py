@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 # customized libraries
 from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test, get_resnet_preproc_fn
 from mil_model.config import get_cfg_defaults
-from mil_model.resnet_model import BaselineResNet50, CustomModel, build_optimizer
+from mil_model.resnet_model import CustomModel, build_optimizer
 from mil_model.loss import get_bceloss, kappa_metric, correct
 from mil_model.util import shuffle_two_arrays
 
@@ -36,6 +36,7 @@ if __name__ == "__main__":
                                 json_dir  =cfg.DATASET.JSON_DIR, 
                                 label_path=cfg.DATASET.LABEL_FILE, 
                                 patch_size=cfg.DATASET.PATCH_SIZE, 
+                                resize_ratio=cfg.DATASET.RESIZE_RATIO,
                                 tile_size =cfg.DATASET.TILE_SIZE, 
                                 is_test   =False,
                                 aug       =PathoAugmentation, 
@@ -45,6 +46,7 @@ if __name__ == "__main__":
                                 json_dir   =cfg.DATASET.JSON_DIR, 
                                 label_path =cfg.DATASET.LABEL_FILE, 
                                 patch_size =cfg.DATASET.PATCH_SIZE, 
+                                resize_ratio=cfg.DATASET.RESIZE_RATIO,
                                 tile_size  =cfg.DATASET.TILE_SIZE, 
                                 is_test    =True,
                                 aug        =None, 
@@ -89,8 +91,8 @@ if __name__ == "__main__":
     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epochs-warmup_epo)
     scheduler = GradualWarmupScheduler(optimizer, 
                                        multiplier=warmup_factor, 
-                                       total_epoch=warmup_epo, a
-                                       fter_scheduler=scheduler_cosine)
+                                       total_epoch=warmup_epo,
+                                       after_scheduler=scheduler_cosine)
 
     # criterion: BCE loss for multilabel tensor with shape (BATCH_SIZE, 5)
     criterion = get_bceloss()
@@ -112,7 +114,7 @@ if __name__ == "__main__":
     best_idx  = 0
     patience  = 0
     if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
-        cfg.MODEL.RESUME_FROM):
+        cfg.MODEL.LOAD_CSV):
         # if csv file exist, then first find out the epoch with best kappa(named resume_from_epoch), 
         # get the losses, kappa values within range 0~ resume_from_epoch +1
         csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")

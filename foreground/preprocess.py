@@ -7,12 +7,13 @@ import json # save foreground info into a json file
 from scipy.ndimage.morphology import binary_dilation
 from scipy import ndimage
 from joblib import Parallel, delayed
+import skimage.io
 
 from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
 
 SLIDE_DIR = '/mnt/extension/experiment/prostate-gleason/train_images/'
 MASK_DIR  = '/mnt/extension/experiment/prostate-gleason/train_label_masks/'
-MIL_PATCH_SIZE= 196 #512
+MIL_PATCH_SIZE= 196*4 #512
 FOREGROUND_DIR = f'/workspace/prostate_isup/foreground/data_{MIL_PATCH_SIZE}/'
 
 def file_without_mask(img_dir, mask_dir):
@@ -21,7 +22,7 @@ def file_without_mask(img_dir, mask_dir):
     problem_files = [f for f in img_files if f not in mask_files]
     return problem_files
 
-def find_non_background_patches(path, patch_size, is_mask=False, orig_path=None, threshold=0.05):
+def find_non_background_patches(path, is_mask=False, orig_path=None, patch_size = 256, threshold=0.05):
     '''
     Arg:
         path: image path string
@@ -34,35 +35,43 @@ def find_non_background_patches(path, patch_size, is_mask=False, orig_path=None,
         This function will first apply scipy mask expansion to a resized foreground mask and judge if these
     patches belong to foregound using the saturation of the mean value of the patch.
     '''
-    this_slide = Slide_OSread(path, show_info=False)
-    W, H = this_slide.get_size()
-    w = W//patch_size if W % patch_size else W//patch_size+1
-    h = H//patch_size if H % patch_size else H//patch_size+1
-    
+    this_slide = skimage.io.MultiImage(path)[1]
+    H, W = this_slide.shape[:2]
+    H *= 4
+    W *= 4
+    w = W//patch_size# if W % patch_size else W//patch_size+1
+    h = H//patch_size# if H % patch_size else H//patch_size+1
+
     obj_coord_list = []
     
     if is_mask:
         assert orig_path is not None
-        thumbnail = this_slide.get_patch_with_resize((0, 0), (W, H), (w, h)).sum(axis=-1).squeeze()
+        thumbnail = cv2.resize(this_slide, dsize=(w, h))
+        if thumbnail.ndim != 2:
+            thumbnail = np.mean(thumbnail, axis=-1)
         struct2 = ndimage.generate_binary_structure(2, 2)
         thumbnail = binary_dilation(thumbnail, structure=struct2).astype(thumbnail.dtype)
         hs, ws = np.where(thumbnail > 0)[:2]
-        original_slide = Slide_OSread(orig_path, show_info=False)
+        original_slide = skimage.io.MultiImage(orig_path)[1]
+        ps = patch_size//4
+
         for i in range(len(hs)):
             h, w = hs[i], ws[i]
-            image_patch = original_slide.get_patch_at_level((w*patch_size, h*patch_size), (patch_size, patch_size))
+            image_patch = original_slide[h*ps:(h+1)*ps, w*ps:(w+1)*ps]
             image_mean = np.mean(image_patch, axis=(0, 1)).reshape(1, 1, 3)
             
             if color.rgb2hsv(image_mean)[0, 0, 1] >= threshold:
                 obj_coord_list.append((w, h))   
     else:
+        ps = patch_size//4
         for hh in range(h):
             for ww in range(w):
-                image_patch = this_slide.get_patch_at_level((ww*patch_size, hh*patch_size), (patch_size, patch_size))
+                image_patch = this_slide[hh*ps:(hh+1)*ps, ww*ps:(ww+1)*ps]
                 image_mean = np.mean(image_patch, axis=(0, 1)).reshape(1, 1, 3)
                 if color.rgb2hsv(image_mean)[0, 0, 1] >= threshold:
                     obj_coord_list.append((ww, hh))
     return obj_coord_list
+
 
 def save_foreground_info(save_path, slide_name, coord_list, from_mask=0):
     if os.path.isfile(save_path):
@@ -100,7 +109,7 @@ if __name__ == "__main__":
         '3790f55cad63053e956fb73027179707',
     ]
     problem_files.extend(broken_masks)
-    
+
     print("Check foreground directory exist?")
     if not os.path.isdir(FOREGROUND_DIR):
         os.makedirs(FOREGROUND_DIR)

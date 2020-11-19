@@ -62,6 +62,7 @@ class TileDataset:
                  json_dir, 
                  label_path, 
                  patch_size, 
+                 resize_ratio=1,
                  tile_size=6, 
                  dup = 4, 
                  is_test=False, 
@@ -77,15 +78,16 @@ class TileDataset:
              aug: augmentation function
              preproc: torch transform object, default: resnet_preproc
         '''
-        self.json_dir   = json_dir
-        self.img_dir    = img_dir
-        self.label_path = label_path
-        self.patch_size = patch_size
-        self.tile_size  = tile_size
-        self.dup        = dup
-        self.is_test    = is_test
-        self.aug        = aug
-        self.preproc    = preproc
+        self.json_dir     = json_dir
+        self.img_dir      = img_dir
+        self.label_path   = label_path
+        self.patch_size   = patch_size
+        self.resize_ratio = resize_ratio
+        self.tile_size    = tile_size
+        self.dup          = dup
+        self.is_test      = is_test
+        self.aug          = aug
+        self.preproc      = preproc
         
         # the following 3 list should be kept in the same order!
         self.img_names   = img_names
@@ -122,6 +124,13 @@ class TileDataset:
         print(f"Loading coordinates takes {time.time()-t1} seconds")
         print("=========Collecting data finished============")
     
+    def _get_frame(self, tiff_file):
+        if self.resize_ratio not in [1, 4]:
+            raise ValueError(f"Unsupported resize ratio {self.resize_ratio}")
+        level = 0 if self.resize_ratio== 1 else 1
+        return skimage.io.MultiImage(tiff_file)[level]
+        
+    
     def __getitem__(self, idx):
         '''
         This function will fectch idx-th bags of image from the coordinate list, get the first
@@ -139,18 +148,17 @@ class TileDataset:
                 imgs: a tensor
                 label: a tensor
             Testing time:
-                imgs: a stacked tensor with shape (4, *img_shape)
+                imgs: list of tensor with length self.dup --> will be averaged after passing to model
                 label: ONE tensor
         '''
         self.cur_pos = idx
         
-        if self.patch_size == 1024:
-            # get image(skimage version -- faster)
-            this_slide = skimage.io.MultiImage(os.path.join(self.img_dir, self.img_names[idx]+".tiff"))[1]
-        
-        else:
-            # get image(openslide version -- slower), but still fater than skimage get image by [0] pyramid
+        if self.resize_ratio == 1:
+            # get image(openslide version -- slower)
             this_slide = Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
+        elif self.resize_ratio == 4:
+            # get image(skimage version -- faster)
+            this_slide = self._get_frame(os.path.join(self.img_dir, self.img_names[idx]+".tiff"))
 
         # cat tile is of type "np.float32", had been normalized to 1
         # test time augmentation: find 4 images and will average their predicted values
@@ -176,7 +184,7 @@ class TileDataset:
     
     def _get_one_cat_tile(self, idx, this_slide):
         '''
-        Arguments: 
+        Argument: 
             this_slide: 
                 1. openslide object(slower) OR
                 2. skimage(faster)
@@ -189,7 +197,8 @@ class TileDataset:
         If the patch size is 1024, then get patch from the first image pyramid of skimage
         '''
         ps, ts = self.patch_size, self.tile_size
-        assert ps%256 == 0
+        dst_sz = self.patch_size //self.resize_ratio
+        
         chosen_indexs = np.random.choice(len(self.coords[idx]), min(ts**2, len(self.coords[idx])), replace=False)
         foreground_coord = [self.coords[idx][chosen_index] for chosen_index in chosen_indexs]
         
@@ -197,21 +206,23 @@ class TileDataset:
         if isinstance(this_slide, Slide_OSread):
             tiles = [this_slide.get_patch_with_resize(coord=(x*ps, y*ps), 
                                                       src_sz=(ps, ps), 
-                                                      dst_sz=(256, 256)) for x, y in foreground_coord]
+                                                      dst_sz=(dst_sz, dst_sz)) for x, y in foreground_coord]
+        
         # this_slide is skimage multiimage object(essentially np.ndarray), get patch directly by subindexing
         elif isinstance(this_slide, np.ndarray):
-            tiles = [this_slide[y*256:(y+1)*256, x*256:(x+1)*256] for x, y in foreground_coord]
+            tiles = [this_slide[y*dst_sz:(y+1)*dst_sz, x*dst_sz:(x+1)*dst_sz] for x, y in foreground_coord]
         else:
             raise ValueError(f"Unknown slide type: {type(this_slide)}")
+        
         
         # discrete augmentation will be performed image-wise before concatenation
         # complete augmentation will be performed to the concatenated big image 
         if self.aug is not None:
             tiles = [self.aug.discrete_aug(image=tile)['image'] for tile in tiles]
-            cat_tile = self.aug.complete_aug(image=concat_tiles(tiles, patch_size=256, tile_sz=self.tile_size))['image']
+            cat_tile = self.aug.complete_aug(image=concat_tiles(tiles, patch_size=dst_sz, tile_sz=self.tile_size))['image']
             cat_tile = cat_tile.astype(np.float32)/255.
         else:
-            cat_tile = concat_tiles(tiles, patch_size=256, tile_sz=self.tile_size).astype(np.float32)/255.
+            cat_tile = concat_tiles(tiles, patch_size=dst_sz, tile_sz=self.tile_size).astype(np.float32)/255.
         return cat_tile
     
     def __next__(self):

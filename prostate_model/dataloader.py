@@ -16,19 +16,25 @@ from torchvision import transforms
 
 # customized libraries
 from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
-
 class InferenceDataset:
     def __init__(self, slide_dir, slide_name, mask_dir, patch_sz, preproc=None):
-        self.cur_pos    = 0
-        self.slide_name = slide_name
-        self.patch_sz   = patch_sz
-        self.preproc    = preproc
-        self.no_mask    = False
+        self.cur_pos      = 0
+        self.slide_name   = slide_name
+        self.patch_sz     = patch_sz
+        self.resize_ratio = 1
+        self.preproc      = preproc
+        self.no_mask      = False
         
-        self.this_slide = skimage.io.MultiImage(os.path.join(slide_dir, slide_name))[1]
+        if patch_sz > 512:
+            self.this_slide   = skimage.io.MultiImage(os.path.join(slide_dir, slide_name))[1]
+            self.resize_ratio = 4
+            self.patch_sz     = self.patch_sz // 4
+            patch_sz          = patch_sz // 4
+        else:
+            self.this_slide = skimage.io.MultiImage(os.path.join(slide_dir, slide_name))[0]
         mask_name = os.path.join(mask_dir, slide_name.split(".tiff")[0]+"_mask.tiff")
         if os.path.isfile(mask_name):
-            self.this_mask = skimage.io.MultiImage(mask_name)[1]
+            self.this_mask = skimage.io.MultiImage(mask_name)[1 if self.resize_ratio == 4 else 0]
         else:
             self.no_mask=True
 
@@ -57,7 +63,9 @@ class InferenceDataset:
         ps = self.patch_sz
         img = self.this_slide[y*ps:(y+1)*ps, x*ps:(x+1)*ps]
         if img.shape[:2] != (ps, ps):
-            img = np.pad(img, ((0, ps-img.shape[0]), (0, ps-img.shape[1]), (0, 0)), mode='constant', constant_values=(0, 255))
+            img = np.pad(img, ((0, ps-img.shape[0]), (0, ps-img.shape[1]), (0, 0)), 
+                         mode='constant', 
+                         constant_values=(0, 255))
         self.cur_pos = (self.cur_pos+1)%len(self)
         return img, x, y
         
@@ -66,12 +74,6 @@ class InferenceDataset:
     
     def __len__(self):
         return len(self.obj_list)
-    
-    def get_img_size(self):
-        return 3, int(self.patch_sz//4), int(self.patch_sz//4)
-    
-    def thumbnail_size(self):
-        return self.obj_mask.shape
 
 def get_train_test(npy_path, isup_path, train_ratio=0.9):
     df = pd.read_csv(isup_path)

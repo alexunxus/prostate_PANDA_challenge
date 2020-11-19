@@ -4,7 +4,10 @@ import random # shuffling
 def concat_tiles(tiles, patch_size, tile_sz=6):
     '''concat tiles into (3, tile_sz*patch_size, tile_size*patch_size) image'''
     ret = np.ones((patch_size*tile_sz, patch_size*tile_sz, 3), dtype=np.uint8)*255
-    for i, tile in enumerate(tiles):
+    if len(tiles) == 0:
+        return ret
+    for i in range(tile_sz**2):
+        tile = tiles[i%len(tiles)]
         h, w = i//tile_sz, i%tile_sz
         ret[h*patch_size:h*patch_size + tile.shape[0], w*patch_size: w*patch_size+tile.shape[1]] = tile
     return ret
