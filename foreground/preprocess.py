@@ -12,7 +12,7 @@ from hephaestus.data.openslide_wrapper_v2 import Slide_OSread
 
 SLIDE_DIR = '/mnt/extension/experiment/prostate-gleason/train_images/'
 MASK_DIR  = '/mnt/extension/experiment/prostate-gleason/train_label_masks/'
-MIL_PATCH_SIZE=512
+MIL_PATCH_SIZE= 196 #512
 FOREGROUND_DIR = f'/workspace/prostate_isup/foreground/data_{MIL_PATCH_SIZE}/'
 
 def file_without_mask(img_dir, mask_dir):
@@ -78,10 +78,14 @@ def process_file_list(target_file, from_mask):
         print(f"File {target_file} had been worked before, skipping...")
         return
     if not from_mask:
-        c = find_non_background_patches(os.path.join(SLIDE_DIR, target_file+".tiff"), is_mask=False, patch_size = MIL_PATCH_SIZE)
+        c = find_non_background_patches(os.path.join(SLIDE_DIR, target_file+".tiff"), 
+                                        is_mask=False, 
+                                        patch_size = MIL_PATCH_SIZE)
     else:
-        c = find_non_background_patches(os.path.join(MASK_DIR, mask_file+"_mask.tiff"), is_mask=True, 
-                                        orig_path=os.path.join(SLIDE_DIR, mask_file+".tiff"), patch_size = MIL_PATCH_SIZE)
+        c = find_non_background_patches(os.path.join(MASK_DIR, mask_file+"_mask.tiff"), 
+                                        is_mask=True, 
+                                        orig_path=os.path.join(SLIDE_DIR, mask_file+".tiff"), 
+                                        patch_size = MIL_PATCH_SIZE)
     save_foreground_info(os.path.join(FOREGROUND_DIR, target_file+".json"), slide_name=target_file, coord_list=c, from_mask=from_mask)
     
 if __name__ == "__main__":

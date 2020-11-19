@@ -74,19 +74,23 @@ if __name__ == "__main__":
         resume_path = cfg.MODEL.RESUME_FROM
     else:
         resume_path = None
-    
-    if cfg.MODEL.BACKBONE == 'baseline':
-        model = BaselineResNet50(num_grade=cfg.DATASET.NUM_GRADE, resume_from=resume_path).cuda()
-    else:
-        model = CustomModel(backbone=cfg.MODEL.BACKBONE, num_grade=cfg.DATASET.NUM_GRADE, resume_from=resume_path).cuda()
+
+    model = CustomModel(backbone=cfg.MODEL.BACKBONE, 
+                        num_grade=cfg.DATASET.NUM_GRADE, 
+                        resume_from=resume_path).cuda()
 
     # prepare optimizer: Adam is suggested in this case.
     warmup_factor = 10
     warmup_epo = 1
     n_epochs = cfg.MODEL.EPOCHS
-    optimizer = build_optimizer(type=cfg.MODEL.OPTIMIZER, model=model, lr=cfg.MODEL.LEARNING_RATE/warmup_factor)
+    optimizer = build_optimizer(type=cfg.MODEL.OPTIMIZER, 
+                                model=model, 
+                                lr=cfg.MODEL.LEARNING_RATE/warmup_factor)
     scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epochs-warmup_epo)
-    scheduler = GradualWarmupScheduler(optimizer, multiplier=warmup_factor, total_epoch=warmup_epo, after_scheduler=scheduler_cosine)
+    scheduler = GradualWarmupScheduler(optimizer, 
+                                       multiplier=warmup_factor, 
+                                       total_epoch=warmup_epo, a
+                                       fter_scheduler=scheduler_cosine)
 
     # criterion: BCE loss for multilabel tensor with shape (BATCH_SIZE, 5)
     criterion = get_bceloss()
@@ -126,7 +130,8 @@ if __name__ == "__main__":
             train_acc = list(df['train acc'])[:best_idx+1]
             test_acc  = list(df['test acc'])[:best_idx+1]
         best_loss = min(test_losses)
-        print(f"Loading csv from {csv_path}, best test loss = {best_loss}, best kappa = {best_kappa}, epoch = {resume_from_epoch}")
+        print(f"Loading csv from {csv_path}, best test loss = {best_loss},"+
+              f" best kappa = {best_kappa}, epoch = {resume_from_epoch}")
 
     # this zero gradient update is needed to avoid a warning message, issue #8.
     optimizer.zero_grad()
@@ -185,7 +190,8 @@ if __name__ == "__main__":
 
             train_correct += correct(outputs.detach().cpu(), labels.detach().cpu())
             
-            pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
+            pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] "+
+                                 f"training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
 
         train_losses.append(total_loss/len(train_loader))

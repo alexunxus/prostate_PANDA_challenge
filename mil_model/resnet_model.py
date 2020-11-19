@@ -4,40 +4,6 @@ import torch.nn as nn
 import torch.optim
 import os
 
-class BaselineResNet50(nn.Module):
-    def __init__(self, num_grade, resume_from=None):
-        super(BaselineResNet50, self).__init__()
-        '''
-        Arg: num_grade: int, largest ISUP grade, is 5
-             resume_from: file string, if the file string exist, the model will be loaded from the file
-                          otherwise, load weight from imagenet
-        '''
-        if resume_from is not None and os.path.isfile(resume_from):
-            self.backbone = resnet50(pretrained=False)
-            self.linear = nn.Linear(1000, num_grade)
-            self.activation = nn.Sigmoid()
-            self.load_state_dict(torch.load(resume_from))
-            print(f"Resume from checkpoint {resume_from}")
-        else: 
-            weight_path = './checkpoint/.imagenet_weight'
-            if not os.path.isfile(weight_path):
-                self.backbone = resnet50(pretrained=True)
-                torch.save(self.backbone.state_dict(), weight_path)
-            else:
-                print(f"Loading model weight from {weight_path}...")
-                self.backbone = resnet50(pretrained=False)
-                self.backbone.load_state_dict(torch.load(weight_path))
-            self.linear = nn.Linear(1000, num_grade)
-            self.activation = nn.Sigmoid()
-
-        print(f"Resnet model is prepared.")
-
-    def forward(self, x):
-        x = self.backbone(x)
-        x = self.linear(x)
-        return self.activation(x)
-
-
 def get_backbone(string, pretrained=True):
     if string == "R-50-xt":
         return resnext50_32x4d(pretrained=pretrained)
@@ -49,6 +15,8 @@ def get_backbone(string, pretrained=True):
         return EfficientNet.from_pretrained('efficientnet-b0')
     elif string == 'enet-b1':
         return EfficientNet.from_pretrained('efficientnet-b1')
+    elif string == 'baseline':
+        return resnet50(pretrained=pretrained)
     else:
         raise ValueError(f"Unknown backbone type {string}!")
 
