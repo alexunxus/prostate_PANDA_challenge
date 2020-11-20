@@ -72,27 +72,24 @@ if __name__ == "__main__":
 
     # prepare resnet50, resume from checkpoint
     print("==============Building model=================")
-    if os.path.isfile(cfg.MODEL.RESUME_FROM):
-        resume_path = cfg.MODEL.RESUME_FROM
-    else:
-        resume_path = None
-
     model = CustomModel(backbone=cfg.MODEL.BACKBONE, 
                         num_grade=cfg.DATASET.NUM_GRADE, 
-                        resume_from=resume_path).cuda()
+                        resume_from=cfg.MODEL.RESUME_FROM
+                        norm=cfg.MODEL.NORM_USE).cuda()
 
     # prepare optimizer: Adam is suggested in this case.
-    warmup_factor = 10
-    warmup_epo = 1
-    n_epochs = cfg.MODEL.EPOCHS
+    warmup_epo    = 3
+    n_epochs      = cfg.MODEL.EPOCHS
     optimizer = build_optimizer(type=cfg.MODEL.OPTIMIZER, 
                                 model=model, 
-                                lr=cfg.MODEL.LEARNING_RATE/warmup_factor)
-    scheduler_cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epochs-warmup_epo)
+                                lr=cfg.MODEL.LEARNING_RATE)
+    
+    # base_scheduler  = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.8)
+    base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=3e-6, T_max=(n_epochs-warmup_epo))
     scheduler = GradualWarmupScheduler(optimizer, 
-                                       multiplier=warmup_factor, 
+                                       multiplier=1.0, 
                                        total_epoch=warmup_epo,
-                                       after_scheduler=scheduler_cosine)
+                                       after_scheduler=base_scheduler)
 
     # criterion: BCE loss for multilabel tensor with shape (BATCH_SIZE, 5)
     criterion = get_bceloss()
@@ -103,34 +100,39 @@ if __name__ == "__main__":
     
     # prepare training and testing loss
     # will save the model with best loss only and have the patience=10
-    train_losses = []
-    test_losses  = []
-    train_acc = []
-    test_acc  = []
-    kappa_values = []
+    train_losses      = []
+    test_losses       = []
+    train_acc         = []
+    test_acc          = []
+    test_kappa        = []
+    train_kappa       = []
     resume_from_epoch = -1
-    best_loss = 1000
-    best_kappa= -10
-    best_idx  = 0
-    patience  = 0
+    best_loss         = 1000
+    best_kappa        = -10
+    best_idx          = 0
+    patience          = 0
     if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
         cfg.MODEL.LOAD_CSV):
         # if csv file exist, then first find out the epoch with best kappa(named resume_from_epoch), 
-        # get the losses, kappa values within range 0~ resume_from_epoch +1
+        # get the losses, kappa values within range 0~ best_epoch +1
         csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
         df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
-        kappa_values = list(df['kappa'])
-        best_kappa = max(kappa_values)
+        test_kappa = list(df['kappa'])
+        best_kappa = max(test_kappa)
         
-        best_idx = np.argmax(np.array(kappa_values))
+        best_idx = np.argmax(np.array(test_kappa))
         resume_from_epoch = best_idx + 1
         
-        kappa_values = kappa_values[:best_idx+1]
+        test_kappa = test_kappa[:best_idx+1]
         train_losses = list(df['train'])[:best_idx+1]
         test_losses  = list(df['test'])[:best_idx+1]
         if 'train acc' in df.columns:
             train_acc = list(df['train acc'])[:best_idx+1]
             test_acc  = list(df['test acc'])[:best_idx+1]
+        if 'train kappa' in df.columns:
+            train_kappa=list(df['train kappa'])[:best_idx+1]
+        else:
+            train_kappa =[0 for i in range(len(train_kappa))]
         best_loss = min(test_losses)
         print(f"Loading csv from {csv_path}, best test loss = {best_loss},"+
               f" best kappa = {best_kappa}, epoch = {resume_from_epoch}")
@@ -152,8 +154,10 @@ if __name__ == "__main__":
         # ===============================================================================================
         #                                 Train for loop block
         # ===============================================================================================
-        total_loss = 0.0
+        total_loss    = 0.0
         train_correct = 0.
+        predictions   = []
+        labels        = []
         pbar = tqdm(enumerate(train_loader, 0))
         
         # tracking data time and GPU time and print them on tqdm bar.
@@ -167,8 +171,8 @@ if __name__ == "__main__":
             inputs = inputs.cuda()
             labels = labels.cuda()
             data_time = time.time()-end_time
-
             end_time = time.time()
+            
             # zero the parameter gradients
             optimizer.zero_grad()
 
@@ -178,6 +182,10 @@ if __name__ == "__main__":
             # compute loss and backpropagation
             loss = criterion(outputs, labels)
             loss.backward()
+
+            # Collect labels and predictions
+            predictions.append(outputs.cpu())
+            groundtruth.append(labels.cpu())
 
             # debug
             if cfg.SOURCE.DEBUG:
@@ -191,11 +199,12 @@ if __name__ == "__main__":
             running_loss =  loss.item()
 
             train_correct += correct(outputs.detach().cpu(), labels.detach().cpu())
-            
+
             pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] "+
                                  f"training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
 
+        train_kappa.append(kappa_metric(groundtruth, predictions))
         train_losses.append(total_loss/len(train_loader))
         train_acc.append(train_correct/len(train_dataset))
         
@@ -206,13 +215,13 @@ if __name__ == "__main__":
         predictions = []
         groundtruth = []
         model.eval()
-        for features, labels in tqdm(test_loader):
-            #=========================================================================
-            #    features is 4-tensor with shape (batch_size//4, 4, 3, 1536, 1536), 
+        for batch_4tensors, labels in tqdm(test_loader):
+            #===============================================================================
+            #    batch_4tensors is 4-tensor with shape (batch_size//4, 4, 3, 1536, 1536), 
             #    labels is a "single" tensor (batch_size, 5)
-            #=========================================================================
+            #===============================================================================
             # 
-            # The first dimension of the features is batch_size//4  because I take 4 images from each test slide 
+            # The first dimension of the batch_4tensors is batch_size//4  because I take 4 images from each test slide 
             # and will ensemble the result.
             # Firstly, reshape the image tensor by combining the first two channel 
             #          (batch_size//4, 4, 3, 1536, 1536)--> (batch_size, 3, 1536, 1536)
@@ -220,12 +229,12 @@ if __name__ == "__main__":
             # to a (batch_size//4, 4, 5) tensor, and average the results by axis=1 --> get a shape (batch_size//4, 5)
             # output, similar to labels
             with torch.no_grad():
-                first_two_dim = features.shape[:2]
-                features = features.view(-1, *features.shape[2:]).cuda()
-                labels   = labels.cuda()
-                outputs = model(features)
-                outputs = torch.mean(outputs.view((*first_two_dim, -1)), axis=1)
-                test_loss = criterion(outputs, labels).item()
+                first_two_dim = batch_4tensors.shape[:2]
+                batch_tensors = batch_4tensors.view(-1, *batch_4tensors.shape[2:]).cuda()
+                labels        = labels.cuda()
+                outputs       = model(batch_tensors)
+                outputs       = torch.mean(outputs.view((*first_two_dim, -1)), axis=1)
+                test_loss     = criterion(outputs, labels).item()
                 test_total_loss += test_loss
 
                 predictions.append(outputs.cpu())
@@ -234,17 +243,18 @@ if __name__ == "__main__":
         test_acc.append(correct(predictions, groundtruth)/(len(predictions)*predictions[0].shape[0]))
         
         # compute quadratic kappa value:
-        kappa = kappa_metric(groundtruth, predictions)
-        kappa_values.append(kappa)
+        test_kappa.append(kappa_metric(groundtruth, predictions))
         print(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]:.5f}"+
-              f", testing loss={test_losses[-1]:.5f}, kappa={kappa:.5f}, train acc={train_acc[-1]:.5f}, test acc = {test_acc[-1]:.5f}")
+              f", testing loss={test_losses[-1]:.5f}, test kappa={test_kappa[-1]:.5f}, train kappa={train_kappa[-1]:.5f}"+
+              f", train acc={train_acc[-1]:.5f}, test acc = {test_acc[-1]:.5f}")
         
         if cfg.SOURCE.TENSORBOARD:
-            writer.add_scalar("Training loss", train_losses[-1], epoch)
-            writer.add_scalar("Training acc", train_acc[-1], epoch) # can be omitted
-            writer.add_scalar("Testing loss", test_losses[-1], epoch)
-            writer.add_scalar("Testing acc", test_acc[-1], epoch)   # can be omitted
-            writer.add_scalar("Test Kappa", kappa_values[-1], epoch)
+            writer.add_scalar("Training loss", train_losses[-1]               , epoch)
+            writer.add_scalar("Training acc" , train_acc[-1]                  , epoch) # can be omitted
+            writer.add_scalar("Testing loss" , test_losses[-1]                , epoch)
+            writer.add_scalar("Testing acc"  , test_acc[-1]                   , epoch)   # can be omitted
+            writer.add_scalar("Test Kappa"   , test_kappa[-1]                 , epoch)
+            writer.add_scalar("Train kappa"  , train_kappa[-1]                , epoch)
             writer.add_scalar("Learning rate", optimizer.param_groups[0]['lr'], epoch)
 
         if cfg.SOURCE.DEBUG:
@@ -268,11 +278,12 @@ if __name__ == "__main__":
 
         print('======Saving training curves=======')
         loss_dict = {}
-        loss_dict["train"]     = train_losses
-        loss_dict["test"]      = test_losses
-        loss_dict["kappa"]     = kappa_values
-        loss_dict["train acc"] = train_acc
-        loss_dict["test acc"]  = test_acc
+        loss_dict["train"]      = train_losses
+        loss_dict["test"]       = test_losses
+        loss_dict["kappa"]      = test_kappa
+        loss_dict["train kappa"] =train_kappa
+        loss_dict["train acc"]  = train_acc
+        loss_dict["test acc"]   = test_acc
         df = pd.DataFrame(loss_dict)
         df.to_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"), index=False)
 
