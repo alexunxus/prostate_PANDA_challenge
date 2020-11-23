@@ -3,5 +3,12 @@ prostate_model/__pycache__/*
 NLSTv2/*
 __pycache__/*
 .ipynb_checkpoints/*
-checkpoint/
+checkpoint/*.pth
+checkpoint/.*
+checkpoint/save/*
 train_map/
+mil_model/__pycache__/*
+foreground/data_256/*
+foreground/data*
+foreground/*.json
+*runs/*

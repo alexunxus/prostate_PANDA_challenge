@@ -1,5 +1,15 @@
 import numpy as np
 import random # shuffling
+from torch import nn
+
+def replace_bn2gn(model):
+    for name, module in model.named_children():
+        if len(list(module.named_children())):
+            model._modules[name] = replace_bn2gn(module)
+        elif type(module) == nn.BatchNorm2d or type(module) == nn.BatchNorm1d:
+            layer_new = nn.GroupNorm(num_groups=4, num_channels=module.num_features)
+            model._modules[name]=layer_new
+    return model
 
 def concat_tiles(tiles, patch_size, tile_sz=6):
     '''concat tiles into (3, tile_sz*patch_size, tile_size*patch_size) image'''

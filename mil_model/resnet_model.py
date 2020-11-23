@@ -3,6 +3,7 @@ from efficientnet_pytorch import EfficientNet
 import torch.nn as nn
 import torch.optim
 import os
+from .util import replace_bn2gn
 
 def get_backbone(string, pretrained=True):
     if string == "R-50-xt":
@@ -41,7 +42,7 @@ class CustomModel(nn.Module):
         if norm not in ['bn', 'gn']:
             raise ValueError(f"Unkonwn norm type {norm}")
         if norm == 'gn':
-            self.swap_norm_layers()
+            self = replace_bn2gn(self)
 
         if resume_from:
             self.load_state_dict(torch.load(resume_from), strict=False)
@@ -51,17 +52,6 @@ class CustomModel(nn.Module):
             print(f"Saving model to {weight_path}")
             torch.save(self.state_dict(), weight_path)
         print(f"{backbone} is prepared.")
-    
-    def swap_norm_layers(self):
-        for name, module in self.backbone.named_modules():
-            if isinstance(module, nn.BatchNorm2d):
-                # Get current bn layer
-                bn = getattr(self.backbone, name)
-                # Create new gn layer
-                gn = nn.GroupNorm(4, bn.num_features)
-                # Assign gn
-                print('Swapping {} with {}'.format(bn, gn))
-                setattr(self.backbone, name, gn)
 
     def init_weights(self):
         tails = [m for m in self.linear_side_chain]
