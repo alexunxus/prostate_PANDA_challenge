@@ -9,6 +9,7 @@ import torch
 from torch.utils.data import DataLoader
 from warmup_scheduler import GradualWarmupScheduler
 from torch.utils.tensorboard import SummaryWriter
+from torch import nn
 
 # customized libraries
 from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test, get_resnet_preproc_fn
@@ -55,7 +56,8 @@ if __name__ == "__main__":
     train_loader = DataLoader(train_dataset, 
                               batch_size=cfg.MODEL.BATCH_SIZE, 
                               shuffle=True , 
-                              num_workers=2)
+                              num_workers=2,
+                              drop_last=True)
     # NOTE: the batch size of test loader is 4 times smaller than traning loader
     #       since test dataset returns a list of "4" image tensor.
     # However, the batch size does not really matter if the training resources is enough to 
@@ -63,7 +65,9 @@ if __name__ == "__main__":
     test_loader  = DataLoader(test_dataset , 
                               batch_size=cfg.MODEL.BATCH_SIZE//4, 
                               shuffle=False, 
-                              num_workers=2)
+                              num_workers=2,
+                              drop_last=True
+                              )
 
     # prepare for checkpoint info
     if not os.path.isdir(cfg.MODEL.CHECKPOINT_PATH):
@@ -74,8 +78,11 @@ if __name__ == "__main__":
     print("==============Building model=================")
     model = CustomModel(backbone=cfg.MODEL.BACKBONE, 
                         num_grade=cfg.DATASET.NUM_GRADE, 
-                        resume_from=cfg.MODEL.RESUME_FROM
+                        resume_from=cfg.MODEL.RESUME_FROM,
                         norm=cfg.MODEL.NORM_USE).cuda()
+    if torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs...")
+        model = nn.DataParallel(model)
 
     # prepare optimizer: Adam is suggested in this case.
     warmup_epo    = 3
@@ -83,8 +90,7 @@ if __name__ == "__main__":
     optimizer = build_optimizer(type=cfg.MODEL.OPTIMIZER, 
                                 model=model, 
                                 lr=cfg.MODEL.LEARNING_RATE)
-    
-    # base_scheduler  = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=0.8)
+
     base_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, eta_min=3e-6, T_max=(n_epochs-warmup_epo))
     scheduler = GradualWarmupScheduler(optimizer, 
                                        multiplier=1.0, 
@@ -99,7 +105,6 @@ if __name__ == "__main__":
         writer = SummaryWriter()
     
     # prepare training and testing loss
-    # will save the model with best loss only and have the patience=10
     train_losses      = []
     test_losses       = []
     train_acc         = []
@@ -134,8 +139,12 @@ if __name__ == "__main__":
         else:
             train_kappa =[0 for i in range(len(train_kappa))]
         best_loss = min(test_losses)
-        print(f"Loading csv from {csv_path}, best test loss = {best_loss},"+
-              f" best kappa = {best_kappa}, epoch = {resume_from_epoch}")
+        print("================Loading CSV==================")
+        print(f"|Loading csv from {csv_path},")
+        print(f"|best test loss = {best_loss:.4f},")
+        print(f"|best kappa     = {best_kappa:.4f},")
+        print(f"|epoch          = {resume_from_epoch:.4f}")
+        print("=============================================")
 
     # this zero gradient update is needed to avoid a warning message, issue #8.
     optimizer.zero_grad()
@@ -157,7 +166,7 @@ if __name__ == "__main__":
         total_loss    = 0.0
         train_correct = 0.
         predictions   = []
-        labels        = []
+        groundtruth   = []
         pbar = tqdm(enumerate(train_loader, 0))
         
         # tracking data time and GPU time and print them on tqdm bar.
@@ -170,7 +179,7 @@ if __name__ == "__main__":
             inputs, labels = data
             inputs = inputs.cuda()
             labels = labels.cuda()
-            data_time = time.time()-end_time
+            data_time = time.time()-end_time # data time
             end_time = time.time()
             
             # zero the parameter gradients
@@ -183,22 +192,18 @@ if __name__ == "__main__":
             loss = criterion(outputs, labels)
             loss.backward()
 
-            # Collect labels and predictions
-            predictions.append(outputs.cpu())
-            groundtruth.append(labels.cpu())
-
-            # debug
-            if cfg.SOURCE.DEBUG:
-                print(model.backbone.conv1.weight.grad)
-
             optimizer.step()
-            gpu_time = time.time()-end_time
+            gpu_time = time.time()-end_time # gpu time
 
             # print statistics
             total_loss   += loss.item()
             running_loss =  loss.item()
 
-            train_correct += correct(outputs.detach().cpu(), labels.detach().cpu())
+            # Collect labels and predictions
+            predictions.append(outputs.detach().cpu())
+            groundtruth.append(labels.detach().cpu())
+
+            train_correct += correct(predictions[-1], groundtruth[-1])
 
             pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] "+
                                  f"training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")

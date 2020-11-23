@@ -53,15 +53,15 @@ class CustomModel(nn.Module):
         print(f"{backbone} is prepared.")
     
     def swap_norm_layers(self):
-        for name, module in self.named_modules():
+        for name, module in self.backbone.named_modules():
             if isinstance(module, nn.BatchNorm2d):
                 # Get current bn layer
-                bn = getattr(self, name)
+                bn = getattr(self.backbone, name)
                 # Create new gn layer
-                gn = nn.GroupNorm(1, bn.num_features)
+                gn = nn.GroupNorm(4, bn.num_features)
                 # Assign gn
                 print('Swapping {} with {}'.format(bn, gn))
-                setattr(self, name, gn)
+                setattr(self.backbone, name, gn)
 
     def init_weights(self):
         tails = [m for m in self.linear_side_chain]
