@@ -135,9 +135,9 @@ if __name__ == "__main__":
             train_acc = list(df['train acc'])[:best_idx+1]
             test_acc  = list(df['test acc'])[:best_idx+1]
         if 'train kappa' in df.columns:
-            train_kappa=list(df['train kappa'])[:best_idx+1]
+            train_kappa = list(df['train kappa'])[:best_idx+1]
         else:
-            train_kappa =[0 for i in range(len(train_kappa))]
+            train_kappa =[0 for i in range(len(test_kappa))]
         best_loss = min(test_losses)
         print("================Loading CSV==================")
         print(f"|Loading csv from {csv_path},")
@@ -191,18 +191,17 @@ if __name__ == "__main__":
             # compute loss and backpropagation
             loss = criterion(outputs, labels)
             loss.backward()
+            loss = loss.detach()
 
             optimizer.step()
             gpu_time = time.time()-end_time # gpu time
 
-            # print statistics
-            total_loss   += loss.item()
-            running_loss =  loss.item()
-
-            # Collect labels and predictions
+            # collect statistics
             predictions.append(outputs.detach().cpu())
             groundtruth.append(labels.detach().cpu())
 
+            running_loss  =  loss.item()
+            total_loss    += running_loss
             train_correct += correct(predictions[-1], groundtruth[-1])
 
             pbar.set_postfix_str(f"[{epoch}/{cfg.MODEL.EPOCHS}] [{i+1}/{len(train_loader)}] "+
@@ -248,7 +247,8 @@ if __name__ == "__main__":
         test_acc.append(correct(predictions, groundtruth)/(len(predictions)*predictions[0].shape[0]))
         
         # compute quadratic kappa value:
-        test_kappa.append(kappa_metric(groundtruth, predictions))
+        kappa = kappa_metric(groundtruth, predictions)
+        test_kappa.append(kappa)
         print(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]:.5f}"+
               f", testing loss={test_losses[-1]:.5f}, test kappa={test_kappa[-1]:.5f}, train kappa={train_kappa[-1]:.5f}"+
               f", train acc={train_acc[-1]:.5f}, test acc = {test_acc[-1]:.5f}")
@@ -264,6 +264,16 @@ if __name__ == "__main__":
 
         if cfg.SOURCE.DEBUG:
             print("Debugging, not saving...")
+            loss_dict = {}
+            loss_dict["train"]      = train_losses
+            loss_dict["test"]       = test_losses
+            loss_dict["kappa"]      = test_kappa
+            loss_dict["train kappa"] =train_kappa
+            loss_dict["train acc"]  = train_acc
+            loss_dict["test acc"]   = test_acc
+            print(loss_dict)
+            for key in loss_dict.keys():
+                print(f"{key}: {len(loss_dict[key])}")
             continue
 
         update_loss  = False
