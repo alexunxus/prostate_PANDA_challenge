@@ -16,7 +16,8 @@ from mil_model.dataloader import TileDataset, PathoAugmentation, get_train_test,
 from mil_model.config import get_cfg_defaults
 from mil_model.resnet_model import CustomModel, build_optimizer
 from mil_model.loss import get_bceloss, kappa_metric, correct
-from mil_model.util import shuffle_two_arrays
+from mil_model.util import shuffle_two_arrays, Metric
+from mil_model.sync_bn.sync_batchnorm.batchnorm import convert_model
 
 if __name__ == "__main__":
     # get config variables
@@ -79,10 +80,11 @@ if __name__ == "__main__":
     model = CustomModel(backbone=cfg.MODEL.BACKBONE, 
                         num_grade=cfg.DATASET.NUM_GRADE, 
                         resume_from=cfg.MODEL.RESUME_FROM,
-                        norm=cfg.MODEL.NORM_USE).cuda()
+                        norm=cfg.MODEL.NORM_USE)
     if torch.cuda.device_count() > 1:
         print(f"Using {torch.cuda.device_count()} GPUs...")
         model = nn.DataParallel(model)
+    model = model.cuda()
 
     # prepare optimizer: Adam is suggested in this case.
     warmup_epo    = 3
@@ -105,46 +107,11 @@ if __name__ == "__main__":
         writer = SummaryWriter()
     
     # prepare training and testing loss
-    train_losses      = []
-    test_losses       = []
-    train_acc         = []
-    test_acc          = []
-    test_kappa        = []
-    train_kappa       = []
-    resume_from_epoch = -1
-    best_loss         = 1000
-    best_kappa        = -10
-    best_idx          = 0
-    patience          = 0
-    if (os.path.isfile(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")) and 
-        cfg.MODEL.LOAD_CSV):
-        # if csv file exist, then first find out the epoch with best kappa(named resume_from_epoch), 
-        # get the losses, kappa values within range 0~ best_epoch +1
-        csv_path = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
-        df = pd.read_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"))
-        test_kappa = list(df['kappa'])
-        best_kappa = max(test_kappa)
-        
-        best_idx = np.argmax(np.array(test_kappa))
-        resume_from_epoch = best_idx + 1
-        
-        test_kappa = test_kappa[:best_idx+1]
-        train_losses = list(df['train'])[:best_idx+1]
-        test_losses  = list(df['test'])[:best_idx+1]
-        if 'train acc' in df.columns:
-            train_acc = list(df['train acc'])[:best_idx+1]
-            test_acc  = list(df['test acc'])[:best_idx+1]
-        if 'train kappa' in df.columns:
-            train_kappa = list(df['train kappa'])[:best_idx+1]
-        else:
-            train_kappa =[0 for i in range(len(test_kappa))]
-        best_loss = min(test_losses)
-        print("================Loading CSV==================")
-        print(f"|Loading csv from {csv_path},")
-        print(f"|best test loss = {best_loss:.4f},")
-        print(f"|best kappa     = {best_kappa:.4f},")
-        print(f"|epoch          = {resume_from_epoch:.4f}")
-        print("=============================================")
+    best_idx               = 0
+    patience               = 0
+    loss_kappa_acc_metrics = Metric()
+    csv_path               = os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv")
+    best_kappa, best_loss, resume_from_epoch = loss_kappa_acc_metrics.load_metrics(csv_path, resume=cfg.MODEL.LOAD_CSV)
 
     # this zero gradient update is needed to avoid a warning message, issue #8.
     optimizer.zero_grad()
@@ -208,9 +175,11 @@ if __name__ == "__main__":
                                  f"training loss={running_loss:.4f}, data time = {data_time:.4f}, gpu time = {gpu_time:.4f}")
             end_time = time.time()
 
-        train_kappa.append(kappa_metric(groundtruth, predictions))
-        train_losses.append(total_loss/len(train_loader))
-        train_acc.append(train_correct/len(train_dataset))
+        loss_kappa_acc_metrics.push_loss_acc_kappa(loss=total_loss/len(train_loader), 
+                                                   acc=train_correct/len(train_dataset), 
+                                                   kappa=kappa_metric(groundtruth, predictions), 
+                                                   train=True,
+                                                   )
         
         # ===============================================================================================
         #                                     TEST for loop block
@@ -243,38 +212,20 @@ if __name__ == "__main__":
 
                 predictions.append(outputs.cpu())
                 groundtruth.append(labels.cpu())
-        test_losses.append(test_total_loss/len(test_loader))
-        test_acc.append(correct(predictions, groundtruth)/(len(predictions)*predictions[0].shape[0]))
         
-        # compute quadratic kappa value:
         kappa = kappa_metric(groundtruth, predictions)
-        test_kappa.append(kappa)
-        print(f"[{epoch+1}/{cfg.MODEL.EPOCHS}] lr = {optimizer.param_groups[0]['lr']:.7f}, training loss = {train_losses[-1]:.5f}"+
-              f", testing loss={test_losses[-1]:.5f}, test kappa={test_kappa[-1]:.5f}, train kappa={train_kappa[-1]:.5f}"+
-              f", train acc={train_acc[-1]:.5f}, test acc = {test_acc[-1]:.5f}")
+        test_epoch_loss = test_total_loss/len(test_loader)
+        loss_kappa_acc_metrics.push_loss_acc_kappa(loss=test_epoch_loss,
+                                                   acc=correct(predictions, groundtruth)/(len(predictions)*predictions[0].shape[0]), 
+                                                   kappa=kappa, train=False,
+                                                   )
+
+        loss_kappa_acc_metrics.print_summary(epoch=epoch, total_epoch=cfg.MODEL.EPOCHS, lr=optimizer.param_groups[0]['lr'])
         
         if cfg.SOURCE.TENSORBOARD:
-            writer.add_scalar("Training loss", train_losses[-1]               , epoch)
-            writer.add_scalar("Training acc" , train_acc[-1]                  , epoch) # can be omitted
-            writer.add_scalar("Testing loss" , test_losses[-1]                , epoch)
-            writer.add_scalar("Testing acc"  , test_acc[-1]                   , epoch)   # can be omitted
-            writer.add_scalar("Test Kappa"   , test_kappa[-1]                 , epoch)
-            writer.add_scalar("Train kappa"  , train_kappa[-1]                , epoch)
+            loss_kappa_acc_metrics.write_to_tensorboard(writer=writer, epoch=epoch)
             writer.add_scalar("Learning rate", optimizer.param_groups[0]['lr'], epoch)
 
-        if cfg.SOURCE.DEBUG:
-            print("Debugging, not saving...")
-            loss_dict = {}
-            loss_dict["train"]      = train_losses
-            loss_dict["test"]       = test_losses
-            loss_dict["kappa"]      = test_kappa
-            loss_dict["train kappa"] =train_kappa
-            loss_dict["train acc"]  = train_acc
-            loss_dict["test acc"]   = test_acc
-            print(loss_dict)
-            for key in loss_dict.keys():
-                print(f"{key}: {len(loss_dict[key])}")
-            continue
 
         update_loss  = False
         update_kappa = False
@@ -291,25 +242,24 @@ if __name__ == "__main__":
         # 3. Saving training curve:
         #   For each epoch, update the loss, kappa dictionary and save them.
 
-        print('======Saving training curves=======')
-        loss_dict = {}
-        loss_dict["train"]      = train_losses
-        loss_dict["test"]       = test_losses
-        loss_dict["kappa"]      = test_kappa
-        loss_dict["train kappa"] =train_kappa
-        loss_dict["train acc"]  = train_acc
-        loss_dict["test acc"]   = test_acc
-        df = pd.DataFrame(loss_dict)
-        df.to_csv(os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"loss.csv"), index=False)
-
-        if test_losses[-1] < best_loss:
-            best_loss = test_losses[-1]
-            torch.save(model.state_dict(), os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best.pth"))
+        if cfg.SOURCE.DEBUG:
+            print("Debugging, not saving...")
+            loss_kappa_acc_metrics.save_metrics(csv_path=csv_path)
+            print(f"best loss={best_loss}, best kappa={best_kappa}")
+        else:
+            print('======Saving training curves=======')
+            loss_kappa_acc_metrics.save_metrics(csv_path=csv_path)
+        
+        if test_epoch_loss < best_loss:
+            best_loss = test_epoch_loss
+            if not cfg.SOURCE.DEBUG:
+                torch.save(model.state_dict(), os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best.pth"))
             patience = 0
             update_loss = True
         if kappa >= best_kappa:
             best_kappa = kappa
-            torch.save(model.state_dict(), os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best_kappa.pth"))
+            if not cfg.SOURCE.DEBUG:
+                torch.save(model.state_dict(), os.path.join(cfg.MODEL.CHECKPOINT_PATH, checkpoint_prefix+"best_kappa.pth"))
             patience = 0
             update_kappa = True
         if not update_loss and not update_kappa:

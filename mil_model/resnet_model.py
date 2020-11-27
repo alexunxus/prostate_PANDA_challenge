@@ -1,9 +1,25 @@
 from torchvision.models import resnet50, resnext50_32x4d
 from efficientnet_pytorch import EfficientNet
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim
 import os
 from .util import replace_bn2gn
+
+class DomainNorm(nn.Module):
+    def __init__(self, channel, l2=True):
+        super(DomainNorm, self).__init__()
+        self.normalize = nn.InstanceNorm2d(num_features=channel, affine=False)
+        self.l2 = l2
+        self.weight = nn.Parameter(torch.ones(1,channel,1,1))
+        self.bias = nn.Parameter(torch.zeros(1,channel,1,1))
+        self.weight.requires_grad = True
+        self.bias.requires_grad = True
+    def forward(self, x):
+        x = self.normalize(x)
+        if self.l2:
+            return F.normalize(x, p=2, dim=1)
+        return x * self.weight + self.bias
 
 def get_backbone(string, pretrained=True):
     if string == "R-50-xt":
@@ -71,7 +87,7 @@ class CustomModel(nn.Module):
 
 def build_optimizer(type, model, lr):
     if type == 'SGD':
-        return torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9)
+        return torch.optim.SGD(model.parameters(), lr=lr, momentum=0.9, weight_decay=1e-4, nesterov=True)
     if type == 'Adam':
         return torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999))
     else:

@@ -2,7 +2,7 @@ from yacs.config import CfgNode as CN
 
 _C                = CN() # Node, lv0
 _C.SYSTEM         = CN() # None, lv1
-_C.SYSTEM.DEVICES = [0, 2]
+_C.SYSTEM.DEVICES = [6]
 
 _C.SOURCE = CN()
 _C.SOURCE.DEBUG       = False
@@ -21,8 +21,8 @@ _C.DATASET.RESIZE_RATIO    = 4
 
 _C.MODEL = CN()
 _C.MODEL.BACKBONE          = 'R-50-st' #'baseline', 'R-50-xt', 'R-50-st', 'enet-b0', 'enet-b1'
-_C.MODEL.BATCH_SIZE        = 12
-_C.MODEL.EPOCHS            = 30
+_C.MODEL.BATCH_SIZE        = 7
+_C.MODEL.EPOCHS            = 50
 _C.MODEL.LEARNING_RATE     = 1e-4
 _C.MODEL.USE_PRETRAIN      = True
 _C.MODEL.NORM_USE          = "bn" # bn, gn

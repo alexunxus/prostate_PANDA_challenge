@@ -64,12 +64,12 @@ class TileDataset:
                  patch_size, 
                  resize_ratio=1,
                  tile_size=6, 
-                 dup = 4, 
+                 dup=4, 
                  is_test=False, 
                  aug=None, 
                  preproc=None):
         '''
-        Arg: img_names: string, the slide names from train_test split
+        Arg: img_names: string, the slide names derived from train_test split
              img_dir: path string, the directory of the slide tiff files
              json_dir: path string, the directory of the json files
              patch_size: int
@@ -94,6 +94,8 @@ class TileDataset:
         self.isup_scores = None
         self.coords      = None
         
+        if self.resize_ratio not in [1, 4]:
+            raise ValueError(f"Unsupported resize ratio {self.resize_ratio}")
         self._get_isup()
         self._get_coord()
         
@@ -125,8 +127,6 @@ class TileDataset:
         print("=========Collecting data finished============")
     
     def _get_frame(self, tiff_file):
-        if self.resize_ratio not in [1, 4]:
-            raise ValueError(f"Unsupported resize ratio {self.resize_ratio}")
         level = 0 if self.resize_ratio== 1 else 1
         return skimage.io.MultiImage(tiff_file)[level]
         
@@ -152,13 +152,9 @@ class TileDataset:
                 label: ONE tensor
         '''
         self.cur_pos = idx
-        
-        if self.resize_ratio == 1:
-            # get image(openslide version -- slower)
-            this_slide = Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
-        elif self.resize_ratio == 4:
-            # get image(skimage version -- faster)
-            this_slide = self._get_frame(os.path.join(self.img_dir, self.img_names[idx]+".tiff"))
+
+        # open slide by Slide_OSread or skimage.io.MultiImage
+        this_slide = self._read_slide(idx)
 
         # cat tile is of type "np.float32", had been normalized to 1
         # test time augmentation: find 4 images and will average their predicted values
@@ -167,7 +163,7 @@ class TileDataset:
             if self.preproc is not None:
                 img = self.preproc(img)
         else:
-            cat_tiles = [self._get_one_cat_tile(idx, this_slide)for i in range(self.dup)]
+            cat_tiles = [self._get_one_cat_tile(idx, this_slide) for i in range(self.dup)]
             img = [torch.from_numpy(np.transpose(cat_tile, (2, 0, 1))).float() for cat_tile in cat_tiles]
             if self.preproc is not None:
                 img = [self.preproc(im) for im in img]
@@ -182,6 +178,15 @@ class TileDataset:
         self.cur_pos = (self.cur_pos+1)%len(self)
         return img, label
     
+    def _read_slide(self, idx):
+        '''Read slide by openslide reader if no resize, skimage.io.multiimage if resize'''
+        if self.resize_ratio == 1:
+            # get image(openslide version -- slower)
+            return Slide_OSread(os.path.join(self.img_dir, self.img_names[idx]+".tiff"), show_info=False)
+        elif self.resize_ratio == 4:
+            # get image(skimage version -- faster)
+            return self._get_frame(os.path.join(self.img_dir, self.img_names[idx]+".tiff"))
+
     def _get_one_cat_tile(self, idx, this_slide):
         '''
         Argument: 
