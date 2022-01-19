@@ -1,13 +1,34 @@
 # Prostate PANDA challenge ISUP score grading
 ## Introduction
 
-Prostate cancer is the most common malignant cancer type in Western countries. Thought the prognosis of prostate cancer is generally better than other types of malignancies, the disease burden can still impose great impact on health system. The main prognostic factor of prostate cancer depends on the grading of prostate biopsy, i.e. Gleason score and ISUP score. In this project we design a multiple-instance learning model based on efficient nets or residual nets and optimize the quadratic weighted kappa score of the model, featuring good inter-rater reliability. 
+Prostate cancer is the most prevalent malignant cancer type for men in Western countries. Although it usually slowly progressive and happens at a higher age, it still imposes a great disease burden on healthcare systems. For example, pathologists have to spend a lot of time on the prostate biopsy specimen, which is time-consuming. 
+
+The prostate cancer specimen is graded by its morphological features:
+<img src="https://healthjade.net/wp-content/uploads/2019/12/gleason-score.jpg">
+
+In addition, with the most dominant two types of histology, one can conclude an ISUP score.
+
+<img src="https://radiologyassistant.nl/assets/prostate-cancer-pi-rads-v2/a5a08441f1be02_2C-ISUP-grade.png">
+
+The ISUP score is important for clinical study since it is highly correlated with the survivial of prostate cancer.
+
+In this project we design a composite-patch preprocessing method to train a model based on efficient nets and evaluate the model with quadratic weighted kappa score, which measures inter-rater reilability.
+
 
 ## Data Summary
 The PANDA dataset can be acquired from the Kaggle challenge website:  
 https://www.kaggle.com/c/prostate-cancer-grade-assessment
 
 The dataset is compsed of 10616 tiff images saved in 1x, 4x resolutions. About half of them are from Karolinska(51%) medical center, and the other half are provided by Radbound (49%) medical center. The ISUP score distribution of the dataset is moderately imbalanced. 
+
+## An Insight to Design a Composite-Patch Preprocessing Step
+
+There are two major problems with this dataset. First of all, the pathology images in this data set is not of constant size, which means if we want to train the model in an end-to-end manner, we have to padding these images. It is inefficient to padding a gigabyte-sized data set. Secondly, most of the images are just background, most of the computational resources are not used on the "foreground".
+
+For the second problem, we divided the image into small patches with fixed size, and then use saturation to filter foreground patches. So we don't have to feed pure-background patches to the neural model.
+
+For the first problem, we measure the statistics for the number of patches per images. We found that 80\% of slides have 36 or less effective patches, 90\% of slides have 64 or less effective patches. Then we try to randomly select 36 or 64 images from the pool of patches for each slide and concatenate them to be a 6 by 6(8 by 8) images. Then we have confidence to fit nearly all the foreground information in each composite patch. In addition, we have a fixed sized training image and also we add an randomness when concatenating images. Randomly shuffling the images and do different augmentation on each images can further make our model more robust.
+
 
 ## Preparation for Training
 
@@ -24,14 +45,16 @@ Additionally, the foreground box information will be stored in folder
 
 The time used in getting the foreground box from the 10616 tiff images is about 20 minutes. 
 
-## Multiple instance learning
+## Composite-Patch Learning
 
 In this project, we use a concatenated tile pooling image(e.g. 36-tiled 256-sized image) to represent the image acqured from one tiff file. Let's take 36-tile, patch size 1024(under 4x resolution is 256) images. These image patches are randomly selected from the coordinate list according to the foreground json file. The selected image can be in 1x or 4x resolution, however, the **4x resolution** is highly recommended since the image can be acquired faster in 4x image pyramid. Discrete augmentation is implemented to every patches before concatenation. Complete augmnetation such as hue/saturation variation is administered to the concatenated 36 tiles image afterward. 
 
-## Test time augmentation
+## Test Time Augmentation (TTA)
 
 We get 4 patterns of patches from each test slide and average their prediction outputs.
 
-## Efficient net and ResNet backbone
+## EfficientNet and ResNet backbone
 
 We use Efficient net b0, b1 and ResNet50, ResNext50_x32d, ResNest50_x32d as our backbone model. The linear layer before the output is a residual linear layer with size 1000.
+
+Yet EfficientNet b0 has a better performance than others and don't require much training time with respect to other models.
