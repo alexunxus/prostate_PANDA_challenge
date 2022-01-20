@@ -3,10 +3,10 @@
 
 Prostate cancer is the most prevalent malignant cancer type for men in Western countries. Although it usually slowly progressive and happens at a higher age, it still imposes a great disease burden on healthcare systems. For example, pathologists have to spend a lot of time on the prostate biopsy specimen, which is time-consuming. 
 
-The prostate cancer specimen is graded by its morphological features:
+The prostate cancer specimen is graded by its morphological features as seen in the following "Gleason's score" system:
 <img src="https://healthjade.net/wp-content/uploads/2019/12/gleason-score.jpg">
 
-In addition, with the most dominant two types of histology, one can conclude an ISUP score.
+In addition, with the two most dominant types of Gleanson's gradings, pathologists can conclude an ISUP score.
 
 <img src="https://radiologyassistant.nl/assets/prostate-cancer-pi-rads-v2/a5a08441f1be02_2C-ISUP-grade.png">
 
